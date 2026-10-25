@@ -39,6 +39,9 @@ Il écrit : `store.config.ts`, les visuels traités dans `public/brand/`, `.env.
 Options :
 
 - `--answers <fichier.json>` : mode non interactif (voir `examples/new-store-answers.json`).
+  Si `adminPassword` est vide, un mot de passe aléatoire est généré et affiché une seule fois.
+- `--slug <slug>` : impose le slug de la boutique (prioritaire sur le fichier de réponses,
+  proposé par défaut en mode interactif) ; utilisé par `new-niche.py` d’`ai-memory-boilerplate` pour garder le même nom partout.
 - `--force` : écrase un `store.config.ts` déjà personnalisé et régénère `.env.local`.
 - `--skip-user` : ne crée pas l’administrateur.
 - `--root <dossier>` : dépôt cible (par défaut, celui du script).

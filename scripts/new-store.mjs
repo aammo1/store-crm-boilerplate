@@ -4,7 +4,9 @@
 //
 //   npm run new-store
 //   node scripts/new-store.mjs --answers examples/new-store-answers.json [--force] [--skip-user]
-//   Options: --root <dir> (target repo, default: this repo), --no-typecheck
+//   Options: --root <dir> (target repo, default: this repo), --no-typecheck,
+//            --slug <slug> (overrides the answers-file slug; interactive default)
+//   In --answers mode an empty adminPassword is generated and printed once.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -35,6 +37,9 @@ const FORCE = flag("--force");
 const SKIP_USER = flag("--skip-user");
 const NO_TYPECHECK = flag("--no-typecheck");
 const answersFile = option("--answers");
+const SLUG_OVERRIDE = option("--slug");
+// Former example password: refuse it so a copied example never becomes a real admin login.
+const EXAMPLE_PASSWORDS = new Set(["changez-moi-12-caracteres-minimum"]);
 
 class FieldError extends Error {}
 const fail = (message) => {
@@ -64,6 +69,7 @@ const FIELDS = [
   { key: "name", prompt: "Nom de la boutique", required: true, group: "Identité",
     parse: (v) => { if (!v || v.length > 60) throw new FieldError("1 à 60 caractères attendus"); return v; } },
   { key: "slug", prompt: "Slug", group: "Identité", default: (a) => {
+      if (SLUG_OVERRIDE) return SLUG_OVERRIDE;
       const slug = slugifyWithArabic(a.name).slice(0, 40).replace(/-+$/, "");
       if (slug.length >= 2) return slug;
       const fallback = randomStoreSlug();
@@ -221,7 +227,18 @@ function collectFromFile(file, skipUser) {
       ? path.resolve(base, given) : given;
     const empty = Array.isArray(given) ? given.length === 0 : given === "";
     const def = field.default ? str(field.default(answers)) : "";
-    const input = empty ? def : resolved;
+    let input = empty ? def : resolved;
+    // --slug wins over the answers file so external launchers keep one store name everywhere.
+    if (field.key === "slug" && SLUG_OVERRIDE) input = SLUG_OVERRIDE;
+    if (field.key === "adminPassword") {
+      if (EXAMPLE_PASSWORDS.has(input)) {
+        fail("Champ « adminPassword » : le mot de passe d'exemple est refusé. Laissez-le vide pour en générer un, ou choisissez le vôtre.");
+      }
+      if (empty) {
+        input = crypto.randomBytes(18).toString("base64url");
+        answers.generatedAdminPassword = true;
+      }
+    }
     try {
       if (field.required && (Array.isArray(input) ? input.length === 0 : !input)) throw new FieldError("valeur requise");
       answers[field.key] = field.parse(input);
@@ -478,6 +495,9 @@ async function main() {
       fail("Création de l'administrateur impossible (voir ci-dessus).");
     }
     console.log(`Administrateur créé : ${answers.adminEmail}`);
+    if (answers.generatedAdminPassword) {
+      console.log(`Mot de passe généré (affiché une seule fois, à conserver) : ${answers.adminPassword}`);
+    }
   }
 
   console.log(`

@@ -23,5 +23,5 @@
   "ozonApiKey": "",
   "adminEmail": "admin@atlas-bijoux.example.ma",
   "adminName": "Administrateur",
-  "adminPassword": "changez-moi-12-caracteres-minimum"
+  "adminPassword": ""
 }
