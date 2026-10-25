@@ -48,7 +48,7 @@ Exemple `operation.json` :
 }
 ```
 
-Pour un produit sans options, fournir `variants: [{ "key": "standard", "options": [] }]` et éventuellement `initialStock: [{ "variantKey": "standard", "qty": 5 }]`. Sans liste de variantes ni stock initial, le catalogue génère la variante Standard, ou les combinaisons des `optionDefinitions` fournies. Les valeurs restent des chaînes, y compris `"36"`, `"XL"` et `"500 ml"`.
+Pour un produit sans options, fournir `variants: [{ "key": "standard", "options": [] }]` et éventuellement `initialStock: [{ "variantKey": "standard", "qty": 5 }]`. Sans liste de variantes ni stock initial, le catalogue génère la variante Standard, ou les combinaisons des `optionDefinitions` fournies. Les valeurs restent des chaînes, y compris `"36"`, `"XL"` et `"500 ml"`. Les champs optionnels `story`, `materials`, `badge`, `isBestSeller`, `upsellRef`, `landingEnabled` (activation de `/l/<slug>`) et `packs` (lots de quantité `[{ quantity, price, label, highlight }]`) sont également acceptés à la création et à la modification.
 
 ## Aperçu, application et reprise
 

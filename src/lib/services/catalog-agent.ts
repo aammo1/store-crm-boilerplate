@@ -11,6 +11,7 @@ import {
   listProducts, restoreProduct, updateProduct, type CatalogProduct,
 } from "./catalog";
 import { createProductSchema, updateProductSchema, variantInputSchema } from "./catalog-schemas";
+import { packsInputSchema, replacePacks, setLandingEnabled } from "./packs";
 import { variantOptionsKey } from "@/lib/variant-options";
 import { stockQuantitySchema } from "./inventory-schemas";
 
@@ -20,6 +21,8 @@ const clientVariantKey = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
 const createData = createProductSchema.omit({ requestId: true, initialStock: true, variants: true }).extend({
   variants: z.array(variantInputSchema.omit({ id: true }).extend({ key: clientVariantKey })).min(1).max(100).optional(),
   initialStock: z.array(z.object({ variantKey: clientVariantKey, qty: stockQuantitySchema }).strict()).max(100).optional(),
+  packs: packsInputSchema.optional(),
+  landingEnabled: z.boolean().optional(),
 }).superRefine((data, ctx) => {
   const keys = new Set<string>();
   for (const variant of data.variants ?? []) {
@@ -32,7 +35,10 @@ const createData = createProductSchema.omit({ requestId: true, initialStock: tru
     opened.add(item.variantKey);
   }
 });
-const editData = updateProductSchema.superRefine((data, ctx) => {
+const editData = updateProductSchema.extend({
+  packs: packsInputSchema.optional(),
+  landingEnabled: z.boolean().optional(),
+}).strict().superRefine((data, ctx) => {
   if (!Object.keys(data).length) ctx.addIssue({ code: "custom", message: "Aucune modification fournie." });
 });
 export const catalogOperationSchema = z.discriminatedUnion("command", [
@@ -55,7 +61,10 @@ export function canonical(value: unknown): string {
 const hash = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex");
 
 export function catalogRevision(): string {
-  return hash(listProducts({ includeInactive: true }).sort((a, b) => a.id.localeCompare(b.id)));
+  const products = listProducts({ includeInactive: true })
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map(p => ({ ...p, packs: p.packs.map(({ id: _id, ...pack }) => { void _id; return pack; }) }));
+  return hash(products);
 }
 
 export function findCatalogProduct(target: string): CatalogProduct {
@@ -87,15 +96,24 @@ function checkImages(operation: Operation, applying: boolean): void {
 function execute(operation: Operation, applying: boolean): CatalogProduct {
   checkImages(operation, applying);
   if (operation.command === "create") {
-    const { variants, initialStock, ...data } = operation.data;
-    return createProduct({ ...data,
+    const { variants, initialStock, packs, landingEnabled, ...data } = operation.data;
+    const created = createProduct({ ...data,
       variants: variants?.map(({ key: _key, ...variant }) => { void _key; return variant; }),
       initialStock: initialStock?.map(item => ({ options: variants!.find(variant => variant.key === item.variantKey)!.options, qty: item.qty })),
       requestId: `agent-${hash(operation.requestId)}`,
     }, { actor: "catalog-agent" });
+    if (packs !== undefined) replacePacks(created.id, packs);
+    if (landingEnabled !== undefined) setLandingEnabled(created.id, landingEnabled);
+    return (packs !== undefined || landingEnabled !== undefined) ? getProductById(created.id)! : created;
   }
   const product = findCatalogProduct(operation.target);
-  if (operation.command === "edit") return updateProduct(product.id, operation.data);
+  if (operation.command === "edit") {
+    const { packs, landingEnabled, ...data } = operation.data;
+    if (Object.keys(data).length > 0) updateProduct(product.id, data);
+    if (packs !== undefined) replacePacks(product.id, packs);
+    if (landingEnabled !== undefined) setLandingEnabled(product.id, landingEnabled);
+    return getProductById(product.id)!;
+  }
   if (operation.command === "archive") archiveProduct(product.id);
   else restoreProduct(product.id);
   return getProductById(product.id)!;

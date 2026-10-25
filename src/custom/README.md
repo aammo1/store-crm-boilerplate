@@ -26,6 +26,6 @@ Hand-made marketing blocks rendered on `/produit/[slug]`, between the size guide
    ```
 
 Keys render in the listed order. Unknown keys are skipped (with a warning in development).
-Keep sections server-rendered, use `next/image` with `sizes`, take all text from the product,
-`store.config.ts` or `src/config/i18n.ts`, and use logical CSS properties (`ms-`, `ps-`, `text-start`) for RTL.
+Keep sections server-rendered (no `"use client"`), use plain `<img>` tags with `loading="lazy"` (or `getImageProps` from `next/image` on the server — avoid importing `<Image>` from `next/image` so its client loader isn't added to the 120 KiB JS budget), take all text from the product,
+`store.config.ts` or `src/config/i18n.ts`, use `href="#commander"` for order CTAs (supported on both `/produit/[slug]` and `/l/[slug]`), and use logical CSS properties (`ms-`, `ps-`, `text-start`) for RTL.
 `example-feature-grid.tsx` is a generic example driven by `product.materials`.

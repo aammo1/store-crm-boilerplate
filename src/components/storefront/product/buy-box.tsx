@@ -124,7 +124,7 @@ export function BuyBox({ product, labels }: { product: BuyBoxProduct; labels: Bu
   const packs = product.packs.filter((p) => p.price < p.quantity * product.price && p.quantity <= MAX_LINE_QTY);
 
   return (
-    <div className="space-y-4">
+    <div id="commander" className="scroll-mt-4 space-y-4">
       {product.optionDefinitions.map((def) => (
         <fieldset key={def.name}>
           <legend className="mb-2 text-sm font-medium">

@@ -51,7 +51,7 @@ if (child) {
   });
   const creation = name => ({ command: "create", requestId: `create-${crypto.randomUUID()}`, data: data(name) });
   const mutation = (command, target, extra = {}) => ({ command, target, requestId: `${command}-${crypto.randomUUID()}`, ...extra });
-  const snapshot = () => Object.fromEntries(["products", "product_colors", "variants", "stock_balances", "stock_movements", "app_state"]
+  const snapshot = () => Object.fromEntries(["products", "product_colors", "product_packs", "variants", "stock_balances", "stock_movements", "app_state"]
     .map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
   const commit = operation => agent.applyCatalogOperation(operation, agent.previewCatalogOperation(operation).preview);
 
@@ -151,6 +151,16 @@ if (child) {
     assert.equal(commit(mutation("archive", "elise")).product.active, false);
     assert.equal(commit(mutation("restore", "elise")).product.active, true);
     assert.deepEqual(db.prepare("SELECT * FROM stock_movements ORDER BY rowid").all(), before);
+    const withPacks = commit(mutation("edit", "elise", {
+      data: {
+        landingEnabled: true,
+        packs: [{ quantity: 2, price: 540, label: "Duo", highlight: true }],
+      },
+    })).product;
+    assert.equal(withPacks.landingEnabled, true);
+    assert.equal(withPacks.packs.length, 1);
+    assert.equal(withPacks.packs[0].quantity, 2);
+    assert.equal(withPacks.packs[0].price, 540);
   });
 
   test("two processes applying the same creation produce one product and one opening per variant", async () => {
