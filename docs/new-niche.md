@@ -45,10 +45,11 @@ Options :
 - `--no-typecheck` : saute la vérification TypeScript.
 
 > **Secrets** : `.env.production.example` contient de **vrais secrets générés**
-> (`AUTH_SECRET`, `STOREFRONT_API_KEY`, `CATALOG_AGENT_KEY`) et, si saisis, vos tokens
-> Meta/TikTok et vos identifiants Ozon, en clair. Le fichier est ignoré par git malgré
+> (`AUTH_SECRET`, `STOREFRONT_API_KEY`, et la même `CATALOG_AGENT_KEY` que `.env.local`) et,
+> si saisis, vos tokens Meta/TikTok et vos identifiants Ozon, en clair. Le fichier est ignoré par git malgré
 > son nom « example » : ne jamais le committer, l’envoyer ou le coller ailleurs que dans
-> les variables d’environnement Coolify. Il fixe `DELIVERY_PROVIDER=ozon` : voir l’étape 10.
+> les variables d’environnement Coolify. Il fixe `DELIVERY_PROVIDER=ozon` si vos identifiants
+> Ozon ont été saisis, ou `mock` sinon : voir l’étape 10.
 
 ## 4. Personnaliser
 
@@ -81,10 +82,12 @@ conserve tant qu’il ne la change pas.
 
 1. Nouvelle ressource depuis le dépôt GitHub, build pack **Dockerfile**, port 3000.
 2. Volume persistant sur `/app/data` (base, médias, sauvegardes et cache d’images).
-3. Variables d’environnement : coller `.env.production.example`. Vérifier
+3. Variables d’environnement : coller `.env.production.example`. Renseigner **obligatoirement**
+   `SECURITY_TRUSTED_IP_HEADER` (ex. `x-forwarded-for` derrière un proxy inverse maîtrisé)
+   **ou** `SECURITY_ACCEPT_GLOBAL_BUDGETS="1"` (sinon le conteneur refuse de démarrer). Vérifier
    `CRM_PUBLIC_URL` et `SECURITY_ALLOWED_ORIGINS` (domaine public en `https://`),
-   `DELIVERY_PROVIDER`, les tokens Meta/TikTok (`FACEBOOK_*`, `TIKTOK_*`) et les
-   identifiants Ozon. `PORT` doit correspondre au port écouté (3000).
+   `DELIVERY_PROVIDER` (`mock` au départ si Ozon a été ignoré), les tokens Meta/TikTok
+   (`FACEBOOK_*`, `TIKTOK_*`) et les identifiants Ozon. `PORT` doit correspondre au port écouté (3000).
 4. Health check : `/api/health`.
 5. **Une seule réplique** (SQLite) ; pas de déploiement roulant.
 6. Le build n’a pas besoin de base. Si l’administrateur n’a pas été créé sur la base de

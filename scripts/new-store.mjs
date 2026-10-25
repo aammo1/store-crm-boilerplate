@@ -441,17 +441,21 @@ async function main() {
 
   writeTemplateVersion(ROOT);
 
-  // .env files (secrets never printed)
+  // .env files (secrets never printed; CATALOG_AGENT_KEY is shared between .env.local and
+  // .env.production.example so ~/.config/<store>/catalog-agent.env works seamlessly after deploy)
   const envLocal = path.join(ROOT, ".env.local");
   const wroteEnvLocal = FORCE || !fs.existsSync(envLocal);
+  let catalogAgentKey = !wroteEnvLocal ? readEnvValue(envLocal, "CATALOG_AGENT_KEY") : undefined;
   if (wroteEnvLocal) {
-    fs.writeFileSync(envLocal, envText(envValues(answers, { production: false }), "# Généré par npm run new-store. Ne pas committer.\n"), { mode: 0o600 });
+    const localValues = envValues(answers, { production: false, catalogAgentKey });
+    catalogAgentKey = localValues.CATALOG_AGENT_KEY;
+    fs.writeFileSync(envLocal, envText(localValues, "# Généré par npm run new-store. Ne pas committer.\n"), { mode: 0o600 });
   } else {
     console.log(".env.local existe déjà : conservé (utilisez --force pour le régénérer).");
   }
   fs.writeFileSync(
     path.join(ROOT, ".env.production.example"),
-    envText(envValues(answers, { production: true }), PRODUCTION_ENV_HEADER),
+    envText(envValues(answers, { production: true, catalogAgentKey }), PRODUCTION_ENV_HEADER),
     { mode: 0o600 },
   );
   ensureGitignore(ROOT);
@@ -483,7 +487,7 @@ Prochaines étapes :
   1. npm run dev  (http://localhost:3000)
   2. Ajoutez vos produits sur /admin
   3. Activez les packs et la page d'atterrissage (/l/<slug>) depuis la fiche produit
-  4. Créez l'application Coolify avec un volume sur /app/data et collez .env.production.example
+  4. Créez l'application Coolify avec un volume sur /app/data, collez .env.production.example et renseignez SECURITY_TRUSTED_IP_HEADER ou SECURITY_ACCEPT_GLOBAL_BUDGETS="1"
   5. Configurez Cloudflare (voir docs/new-niche.md)
 `);
 }

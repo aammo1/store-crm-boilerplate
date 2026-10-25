@@ -1,6 +1,6 @@
 # Custom product sections
 
-Hand-made marketing blocks rendered on `/produit/[slug]`, between the size guide and the reviews.
+Hand-made marketing blocks rendered on both `/produit/[slug]` and `/l/[slug]` when mapped for a product slug.
 
 1. Create a server component in this folder. It receives `{ product, locale }`:
 
@@ -26,6 +26,10 @@ Hand-made marketing blocks rendered on `/produit/[slug]`, between the size guide
    ```
 
 Keys render in the listed order. Unknown keys are skipped (with a warning in development).
-Keep sections server-rendered (no `"use client"`), use plain `<img>` tags with `loading="lazy"` (or `getImageProps` from `next/image` on the server — avoid importing `<Image>` from `next/image` so its client loader isn't added to the 120 KiB JS budget), take all text from the product,
-`store.config.ts` or `src/config/i18n.ts`, use `href="#commander"` for order CTAs (supported on both `/produit/[slug]` and `/l/[slug]`), and use logical CSS properties (`ms-`, `ps-`, `text-start`) for RTL.
-`example-feature-grid.tsx` is a generic example driven by `product.materials`.
+
+## Storefront & JS Budget Rules (Mandatory)
+- **Server-only:** Keep sections server-rendered (never add `"use client"`). `/l/[slug]` sits close to the strict **120 KiB gzip** first-load JS budget (`npm run perf-budget`).
+- **Never import from `next/image`:** Importing `<Image>` or even `getImageProps` from `"next/image"` pulls the Next.js client image runtime (~5 KiB gzip) into the route bundle and fails `npm run perf-budget`. Use `StoreImage` from `@/components/storefront/ui/store-image` or plain `<img loading="lazy" width={...} height={...}>`.
+- **Allowed image paths:** `StoreImage` optimizes local paths matching `/api/media/**`, `/images/**`, or `/brand/**` (see `next.config.ts`). Put any new static section visuals in `public/images/<slug>/` (WebP preferred).
+- **Order CTAs & RTL:** Use `href="#commander"` for order anchor CTAs (wired on both `/produit/[slug]` and `/l/[slug]`), match the store's `locale` (`fr` or `ar`) for bespoke section copy (reusing `product`, `store.config.ts` or `src/config/i18n.ts` for shared UI text), and use logical CSS properties (`ms-`, `ps-`, `text-start`) for RTL.
+- `example-feature-grid.tsx` is a generic example driven by `product.materials`.

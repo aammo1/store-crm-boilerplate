@@ -25,3 +25,18 @@ test("dev env omits the production-only keys", () => {
   assert.equal(dev.DELIVERY_PROVIDER, "mock");
   assert.ok(!("SECURITY_TRUSTED_IP_HEADER" in dev) && !("SECURITY_ACCEPT_GLOBAL_BUDGETS" in dev));
 });
+
+test("omitting optional Ozon credentials falls back to mock so production boots once trusted-IP choice is made", () => {
+  const noOzon = { ...answers, ozonClientId: "", ozonApiKey: "" };
+  const prodNoOzon = envValues(noOzon, { production: true });
+  assert.equal(prodNoOzon.DELIVERY_PROVIDER, "mock");
+  validateRuntimeEnv({ NODE_ENV: "production", ...prodNoOzon, SECURITY_ACCEPT_GLOBAL_BUDGETS: "1" });
+});
+
+test("catalogAgentKey option shares catalog secret across dev and prod while isolating auth and storefront secrets", () => {
+  const dev = envValues(answers, { production: false });
+  const prodShared = envValues(answers, { production: true, catalogAgentKey: dev.CATALOG_AGENT_KEY });
+  assert.equal(prodShared.CATALOG_AGENT_KEY, dev.CATALOG_AGENT_KEY);
+  assert.notEqual(prodShared.AUTH_SECRET, dev.AUTH_SECRET);
+  assert.notEqual(prodShared.STOREFRONT_API_KEY, dev.STOREFRONT_API_KEY);
+});
