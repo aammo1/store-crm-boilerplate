@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { requireUser } from "@/lib/auth-guards";
+import { getDb } from "@/lib/db";
 import { cn } from "@/lib/utils";
 import {
   countDueCallbacks,
@@ -165,6 +166,19 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
     tracking: tracking.length > 0 ? tracking : undefined,
     page,
   });
+
+  const orderIds = result.orders.map((o) => o.id);
+  let waReadyOrderIds = new Set<string>();
+  if (orderIds.length > 0) {
+    const db = getDb();
+    const placeholders = orderIds.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT order_id FROM wa_order_drafts WHERE ready_to_confirm = 1 AND order_id IN (${placeholders})`,
+      )
+      .all(...orderIds) as Array<{ order_id: string }>;
+    waReadyOrderIds = new Set(rows.map((r) => r.order_id));
+  }
 
   // Export keeps every current filter but never the page number.
   const exportParams = new URLSearchParams();
@@ -462,7 +476,7 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
         archived={archived}
         isAdmin={user.role === "admin"}
       >
-        <OrdersTable orders={result.orders} now={now} />
+        <OrdersTable orders={result.orders} now={now} waReadyOrderIds={waReadyOrderIds} />
       </OrderBulkActions>
 
       {result.pageCount > 1 ? (

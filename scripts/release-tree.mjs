@@ -20,7 +20,7 @@ export function auditReleaseTree() {
     if (file.startsWith("public/brand/")) continue;
     assert.ok(!/(?:^|\/)(?:\.git|data|uploads|backups|secrets|node_modules|\.next|test-results|playwright-report|\.auth)(?:\/|$)|\.(?:db|sqlite\d*|pem|key|p12|pfx|log|csv|zip|png|jpe?g|webp|pdf)(?:$|[-.])|\.env(?!\.example$)/i.test(file), `Private artifact: ${file}`);
     if (fonts.has(file)) continue;
-    assert.ok(file === "public/.gitkeep" || /\.(?:md|ts|tsx|mjs|css|json|sql|yml|cron|service|timer)$/.test(file) || allowedRootFiles.has(file), `Unreviewed binary: ${file}`);
+    assert.ok(file.endsWith("/.gitkeep") || /\.(?:md|ts|tsx|mjs|css|json|sql|yml|cron|service|timer)$/.test(file) || allowedRootFiles.has(file), `Unreviewed binary: ${file}`);
     const text = readFileSync(path.join(root, file), "utf8");
     assert.ok(!text.includes("\0"), `Unexpected binary: ${file}`);
     // High-confidence material only; do not print matched secret contents.

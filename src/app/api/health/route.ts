@@ -15,6 +15,10 @@ import { workerHealth } from "@/lib/workers";
 import { WORKER_INTERVAL_MS as META_INTERVAL_MS } from "@/lib/workers/meta";
 import { submissionIntervalMs } from "@/lib/workers/submission";
 import { WORKER_INTERVAL_MS as TIKTOK_INTERVAL_MS } from "@/lib/workers/tiktok";
+import { WA_TICK_MS } from "@/lib/workers/whatsapp";
+import { getWhatsAppConnectionState } from "@/lib/services/whatsapp-settings";
+import { outboxStats } from "@/lib/services/whatsapp-outbox";
+import { whatsappConfigured } from "@/lib/whatsapp/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +65,7 @@ export function GET(request: Request): NextResponse {
       tracking: pollIntervalMs(),
       meta: META_INTERVAL_MS,
       tiktok: TIKTOK_INTERVAL_MS,
+      whatsapp: WA_TICK_MS,
     };
     const now = Date.now();
     const workers = {} as Record<
@@ -101,6 +106,11 @@ export function GET(request: Request): NextResponse {
         lease: workerLeaseStatus(),
         workers,
         queues: readQueues(),
+        whatsapp: {
+          configured: whatsappConfigured(),
+          connection: getWhatsAppConnectionState(),
+          outbox: outboxStats(),
+        },
       },
       { headers },
     );

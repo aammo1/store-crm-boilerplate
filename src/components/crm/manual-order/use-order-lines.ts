@@ -10,9 +10,37 @@ import {
   type SerializableVariant,
 } from "./types";
 
-export function useOrderLines(products: SerializableProduct[], shippingRules: ShippingRules) {
+export function useOrderLines(
+  products: SerializableProduct[],
+  shippingRules: ShippingRules,
+  initialLines?: Array<{ variantId: string; quantity: number }>,
+) {
   const [productSearch, setProductSearch] = useState("");
-  const [lines, setLines] = useState<OrderLineItem[]>(() => [newEmptyLine(products, "line_1")]);
+  const [lines, setLines] = useState<OrderLineItem[]>(() => {
+    if (initialLines && initialLines.length > 0) {
+      const generated: OrderLineItem[] = [];
+      for (let i = 0; i < initialLines.length; i++) {
+        const item = initialLines[i];
+        let foundProductId: string | null = null;
+        for (const p of products) {
+          if (p.variants.some((v) => v.variantId === item.variantId)) {
+            foundProductId = p.id;
+            break;
+          }
+        }
+        if (foundProductId) {
+          generated.push({
+            id: `line_init_${i}`,
+            productId: foundProductId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+          });
+        }
+      }
+      if (generated.length > 0) return generated;
+    }
+    return [newEmptyLine(products, "line_1")];
+  });
 
   const productsMap = useMemo(() => {
     const map = new Map<string, SerializableProduct>();

@@ -78,9 +78,11 @@ export function NextCallback({ iso, now = new Date() }: NextCallbackProps) {
 export function OrdersTable({
   orders,
   now,
+  waReadyOrderIds,
 }: {
   orders: OrderListItem[];
   now?: Date;
+  waReadyOrderIds?: Set<string>;
 }) {
   if (orders.length === 0) {
     return (
@@ -187,7 +189,14 @@ export function OrdersTable({
                 {formatMad(order.total)}
               </td>
               <td className="px-4 py-3">
-                <StatusBadge status={order.confirmationStatus} />
+                <div className="flex flex-col items-start gap-1">
+                  <StatusBadge status={order.confirmationStatus} />
+                  {waReadyOrderIds?.has(order.id) || (order as { waReady?: boolean }).waReady ? (
+                    <span className="inline-flex rounded-full border border-[var(--crm-success)]/40 bg-[var(--crm-success-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--crm-success)]">
+                      Prêt (WhatsApp)
+                    </span>
+                  ) : null}
+                </div>
               </td>
               <td className="px-4 py-3 text-muted-foreground">
                 {order.assignedToName ?? (

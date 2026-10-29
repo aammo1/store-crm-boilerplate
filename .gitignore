@@ -71,3 +71,8 @@ next-env.d.ts
 /compose.override.yml
 /docker-compose.override.yml
 *.log
+
+# whatsapp eval
+scripts/whatsapp-eval/audio/*
+!scripts/whatsapp-eval/audio/.gitkeep
+scripts/whatsapp-eval/reports/

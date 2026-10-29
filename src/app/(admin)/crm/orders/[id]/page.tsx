@@ -15,6 +15,8 @@ import { ConfirmOrder } from "@/components/crm/confirm-order";
 import { DeliveryOutcomeActions } from "@/components/crm/delivery-outcome-actions";
 import { getDeliveryOutcome } from "@/lib/services/delivery-outcomes";
 import { EditOrder } from "@/components/crm/edit-order";
+import { OrderWhatsappPanel } from "@/components/crm/whatsapp/order-whatsapp-panel";
+import { getDraft } from "@/lib/services/whatsapp-staging";
 import { BlockPhoneButton } from "@/components/crm/block-phone-button";
 import { OrderAttributionCard } from "@/components/crm/order-attribution-card";
 import { OrderEditHistoryList } from "@/components/crm/order-edit-history";
@@ -178,6 +180,7 @@ export default async function OrderDetailPage({
   const editState = getOrderEditState(id);
   const editHistory = listOrderEdits(id);
   const customerHistory = getCustomerHistory(order.id, order.customerPhone);
+  const waDraft = getDraft(order.id);
   const { storeName } = getStoreSettings();
   let shippingRules;
   let pricingError;
@@ -279,6 +282,16 @@ export default async function OrderDetailPage({
           initialAddress={order.address}
           initialCityId={order.cityId}
           totalLabel={formatMad(order.total)}
+          draft={
+            waDraft
+              ? {
+                  address: waDraft.address,
+                  cityId: waDraft.cityId,
+                  cityName: waDraft.cityName,
+                  readyToConfirm: waDraft.readyToConfirm,
+                }
+              : null
+          }
         />
       </EditOrder> : null}
 
@@ -460,6 +473,8 @@ export default async function OrderDetailPage({
         </div>
 
         <div className="min-w-0 space-y-6">
+          <OrderWhatsappPanel orderId={order.id} />
+
           <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               Assignation

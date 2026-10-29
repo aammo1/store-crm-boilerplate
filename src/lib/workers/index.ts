@@ -12,6 +12,7 @@ import { startSubmissionWorker } from "@/lib/workers/submission";
 import { startTrackingWorker } from "@/lib/workers/tracking";
 import { startMetaWorker } from "@/lib/workers/meta";
 import { startTikTokWorker } from "@/lib/workers/tiktok";
+import { startWhatsAppWorker } from "@/lib/workers/whatsapp";
 
 const CITIES_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -44,16 +45,20 @@ type WorkerGlobals = {
   __crmTrackingWorker?: NodeJS.Timeout;
   __crmMetaWorker?: NodeJS.Timeout;
   __crmTikTokWorker?: NodeJS.Timeout;
+  __crmWhatsAppWorker?: NodeJS.Timeout;
+  __crmWhatsAppMaintenance?: NodeJS.Timeout;
 };
 
 /** Clears every worker timer so a process that lost the lease stops working. */
-function stopWorkerTimers(): void {
+export function stopWorkerTimers(): void {
   const g = globalThis as WorkerGlobals;
   for (const key of [
     "__crmSubmissionWorker",
     "__crmTrackingWorker",
     "__crmMetaWorker",
     "__crmTikTokWorker",
+    "__crmWhatsAppWorker",
+    "__crmWhatsAppMaintenance",
     "__crmCitiesTimer",
     "__crmWorkerLeaseTimer",
   ] as const) {
@@ -68,6 +73,7 @@ function startAllWorkers(): void {
   startSafely("tracking", startTrackingWorker);
   startSafely("meta", startMetaWorker);
   startSafely("tiktok", startTikTokWorker);
+  startSafely("whatsapp", startWhatsAppWorker);
   void refreshCitiesLoop();
 }
 
@@ -162,24 +168,38 @@ function startSafely(name: string, start: () => void): void {
     start();
   } catch (err) {
     log.error("workers.start_failed", { worker: name, error: err });
-    if (name === "submission" || name === "tracking" || name === "meta" || name === "tiktok") {
+    if (
+      name === "submission" ||
+      name === "tracking" ||
+      name === "meta" ||
+      name === "tiktok" ||
+      name === "whatsapp"
+    ) {
       recordWorkerError(name, err);
     }
   }
 }
 
 /** Which worker timers are registered in this process (consumed by /api/health). */
-export function workerHealth(): { submission: { enabled: boolean }; tracking: { enabled: boolean }; meta: { enabled: boolean }; tiktok: { enabled: boolean } } {
+export function workerHealth(): {
+  submission: { enabled: boolean };
+  tracking: { enabled: boolean };
+  meta: { enabled: boolean };
+  tiktok: { enabled: boolean };
+  whatsapp: { enabled: boolean };
+} {
   const g = globalThis as {
     __crmSubmissionWorker?: NodeJS.Timeout;
     __crmTrackingWorker?: NodeJS.Timeout;
     __crmMetaWorker?: NodeJS.Timeout;
     __crmTikTokWorker?: NodeJS.Timeout;
+    __crmWhatsAppWorker?: NodeJS.Timeout;
   };
   return {
     submission: { enabled: !!g.__crmSubmissionWorker },
     tracking: { enabled: !!g.__crmTrackingWorker },
     meta: { enabled: !!g.__crmMetaWorker },
     tiktok: { enabled: !!g.__crmTikTokWorker },
+    whatsapp: { enabled: !!g.__crmWhatsAppWorker },
   };
 }

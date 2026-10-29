@@ -17,10 +17,20 @@ export const metadata: Metadata = {
   robots: { index: false },
 };
 
-export default async function NewManualOrderPage({ searchParams }: { searchParams: Promise<{ leadId?: string }> }) {
+interface PageSearchParams {
+  leadId?: string;
+  waRequest?: string;
+  name?: string;
+  phone?: string;
+  city?: string;
+  address?: string;
+  items?: string;
+}
+
+export default async function NewManualOrderPage({ searchParams }: { searchParams: Promise<PageSearchParams> }) {
   await requireUser();
-  const { leadId } = await searchParams;
-  const lead = typeof leadId === "string" && leadId.length <= 64 ? getLead(leadId) : null;
+  const sp = await searchParams;
+  const lead = typeof sp.leadId === "string" && sp.leadId.length <= 64 ? getLead(sp.leadId) : null;
 
   const allProducts = listProducts();
   const cities = listCities();
@@ -46,6 +56,38 @@ export default async function NewManualOrderPage({ searchParams }: { searchParam
     }))
     .filter((product) => product.variants.length > 0);
 
+  const initialCustomer = lead
+    ? { name: lead.name === "Sans nom" ? "" : lead.name, phone: lead.phone }
+    : sp.name || sp.phone
+      ? { name: sp.name ?? "", phone: sp.phone ?? "" }
+      : undefined;
+
+  let initialCityId: number | null = null;
+  if (sp.city) {
+    const norm = sp.city.trim().toLowerCase();
+    const matched = cities.find(
+      (c) =>
+        c.name.toLowerCase() === norm ||
+        (c.arabicName && c.arabicName.toLowerCase() === norm),
+    );
+    if (matched) initialCityId = matched.id;
+  }
+
+  let initialLines: Array<{ variantId: string; quantity: number }> | undefined;
+  if (sp.items) {
+    const parsed: Array<{ variantId: string; quantity: number }> = [];
+    for (const part of sp.items.split(",")) {
+      const [variantId, qtyStr] = part.split(":");
+      const qty = parseInt(qtyStr, 10);
+      if (variantId && !isNaN(qty) && qty > 0) {
+        parsed.push({ variantId: variantId.trim(), quantity: qty });
+      }
+    }
+    if (parsed.length > 0) {
+      initialLines = parsed;
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -64,8 +106,16 @@ export default async function NewManualOrderPage({ searchParams }: { searchParam
         </p>
       </div>
 
-      <ManualOrderForm products={products} cities={cities} shippingRules={{ shippingFeeMad, freeShippingThresholdMad }}
-        initialCustomer={lead ? { name: lead.name === "Sans nom" ? "" : lead.name, phone: lead.phone } : undefined} />
+      <ManualOrderForm
+        products={products}
+        cities={cities}
+        shippingRules={{ shippingFeeMad, freeShippingThresholdMad }}
+        initialCustomer={initialCustomer}
+        initialCityId={initialCityId}
+        initialAddress={sp.address || null}
+        initialLines={initialLines}
+        waRequestId={sp.waRequest || null}
+      />
     </div>
   );
 }

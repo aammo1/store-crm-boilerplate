@@ -30,7 +30,8 @@
     "perf-budget": "node scripts/perf-budget.mjs",
     "ozon:verify": "node scripts/ozon-verify.mjs",
     "sendit:verify": "node scripts/sendit-verify.mjs",
-    "purge-confirmed-tests": "node scripts/purge-confirmed-tests.mjs"
+    "purge-confirmed-tests": "node scripts/purge-confirmed-tests.mjs",
+    "eval:whatsapp": "node scripts/whatsapp-eval/run.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.70",

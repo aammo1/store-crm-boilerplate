@@ -168,9 +168,9 @@ graph TD
 - [x] [task-23-catalog-tools](./tasks/task-23-catalog-tools.md): Catalog tools for the AI
 
 ### Wave 5
-- [ ] [task-24-whatsapp-worker](./tasks/task-24-whatsapp-worker.md): WhatsApp worker and health
-- [ ] [task-25-order-panel-proposals-ui](./tasks/task-25-order-panel-proposals-ui.md): Order page panel, proposals and requests UI
-- [ ] [task-26-darija-eval](./tasks/task-26-darija-eval.md): Darija evaluation harness
+- [x] [task-24-whatsapp-worker](./tasks/task-24-whatsapp-worker.md): WhatsApp worker and health
+- [x] [task-25-order-panel-proposals-ui](./tasks/task-25-order-panel-proposals-ui.md): Order page panel, proposals and requests UI
+- [x] [task-26-darija-eval](./tasks/task-26-darija-eval.md): Darija evaluation harness
 
 ### Wave 6
 - [x] [task-27-sendit-adapter](./tasks/task-27-sendit-adapter.md): Sendit adapter — SUPERSEDED by specs/sendit-courier

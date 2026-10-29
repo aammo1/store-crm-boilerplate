@@ -40,9 +40,22 @@ export interface ManualOrderFormProps {
   shippingRules: ShippingRules;
   /** Optional prefill (abandoned checkout lead). */
   initialCustomer?: { name: string; phone: string };
+  initialCityId?: number | null;
+  initialAddress?: string | null;
+  initialLines?: Array<{ variantId: string; quantity: number }>;
+  waRequestId?: string | null;
 }
 
-export function ManualOrderForm({ products, cities, shippingRules, initialCustomer }: ManualOrderFormProps) {
+export function ManualOrderForm({
+  products,
+  cities,
+  shippingRules,
+  initialCustomer,
+  initialCityId,
+  initialAddress,
+  initialLines,
+  waRequestId,
+}: ManualOrderFormProps) {
   const router = useRouter();
   const formUid = useId();
 
@@ -55,11 +68,13 @@ export function ManualOrderForm({ products, cities, shippingRules, initialCustom
   const [source, setSource] = useState<ManualOrderSource>("manual_whatsapp");
 
   // Optional fields
-  const [selectedCityId, setSelectedCityId] = useState<string>("none");
-  const [address, setAddress] = useState("");
+  const [selectedCityId, setSelectedCityId] = useState<string>(
+    initialCityId ? String(initialCityId) : "none",
+  );
+  const [address, setAddress] = useState(initialAddress ?? "");
   const [note, setNote] = useState("");
 
-  const order = useOrderLines(products, shippingRules);
+  const order = useOrderLines(products, shippingRules, initialLines);
   const { lines, setLines, variantsMap, getLineVariant } = order;
 
   // Submission & Retry states
@@ -148,6 +163,18 @@ export function ManualOrderForm({ products, cities, shippingRules, initialCustom
         toast.success("Commande déjà enregistrée (rejeu identique de la requête). Redirection…");
       } else {
         toast.success("Commande créée avec succès en Nouvelle. Redirection…");
+      }
+
+      if (waRequestId && result.orderId) {
+        try {
+          await fetch(`/api/crm/whatsapp/requests/${encodeURIComponent(waRequestId)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "convert", orderId: result.orderId }),
+          });
+        } catch {
+          // ignore network failure on best-effort convert
+        }
       }
 
       router.push(`/crm/orders/${result.orderId}`);

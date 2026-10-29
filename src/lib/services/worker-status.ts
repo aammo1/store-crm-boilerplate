@@ -1,7 +1,7 @@
 import { getAppState, setAppState } from "@/lib/services/app-state";
 import { redactText } from "@/lib/shipping/redact";
 
-export type WorkerName = "submission" | "tracking" | "meta" | "tiktok";
+export type WorkerName = "submission" | "tracking" | "meta" | "tiktok" | "whatsapp";
 
 export interface WorkerStatus {
   lastTickAt: string | null;

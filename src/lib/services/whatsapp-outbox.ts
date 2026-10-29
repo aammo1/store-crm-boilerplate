@@ -590,6 +590,25 @@ export function cancelQueuedForOrder(orderId: string, purposes?: OutboxPurpose[]
 }
 
 /**
+ * Cancels queued outbox messages for a phone number (e.g. when not on WhatsApp).
+ */
+export function cancelQueuedForPhone(phone: string): number {
+  const db = getDb();
+  const normPhone = normalizeMaPhone(phone) ?? phone;
+  const nowIso = new Date().toISOString();
+  const result = db
+    .prepare(`
+      UPDATE wa_outbox
+      SET status = 'cancelled',
+          updated_at = ?
+      WHERE (phone = ? OR phone = ?)
+        AND status = 'queued'
+    `)
+    .run(nowIso, normPhone, phone);
+  return result.changes;
+}
+
+/**
  * Transitions stuck 'sending' rows with lease older than 5 minutes to 'uncertain'.
  */
 export function recoverStaleSending(now: Date = new Date()): number {

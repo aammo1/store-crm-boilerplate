@@ -38,6 +38,13 @@ export interface ConfirmOrderCity {
   arabicName?: string | null;
 }
 
+export interface ConfirmOrderDraft {
+  address: string | null;
+  cityId: number | null;
+  cityName?: string | null;
+  readyToConfirm?: boolean;
+}
+
 interface VariantOption {
   variantId: string;
   sku: string;
@@ -66,6 +73,7 @@ export function ConfirmOrder({
   initialAddress,
   initialCityId,
   totalLabel,
+  draft,
 }: {
   orderId: string;
   lines: ConfirmOrderLine[];
@@ -73,6 +81,7 @@ export function ConfirmOrder({
   initialAddress: string | null;
   initialCityId: number | null;
   totalLabel: string;
+  draft?: ConfirmOrderDraft | null;
 }) {
   const router = useRouter();
   const [variantsByProduct, setVariantsByProduct] = useState<Record<string, VariantOption[]>>({});
@@ -86,6 +95,17 @@ export function ConfirmOrder({
   const [syncingCities, setSyncingCities] = useState(false);
   const [error, setError] = useState("");
   const busy = useRef(false);
+
+  useEffect(() => {
+    function handleApplyDraft(event: Event) {
+      const custom = event as CustomEvent<ConfirmOrderDraft>;
+      if (!custom.detail) return;
+      if (custom.detail.address) setAddress(custom.detail.address);
+      if (custom.detail.cityId) setCityId(String(custom.detail.cityId));
+    }
+    window.addEventListener("apply-wa-draft", handleApplyDraft);
+    return () => window.removeEventListener("apply-wa-draft", handleApplyDraft);
+  }, []);
 
   async function handleSyncCities() {
     setSyncingCities(true);
@@ -308,6 +328,37 @@ export function ConfirmOrder({
         })}
       </ul>
       {error ? <p role="alert" className="mt-4 rounded-lg border border-destructive p-3 text-sm text-destructive">{error}</p> : null}
+
+      {draft && (draft.address || draft.cityName) ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--crm-info)]/40 bg-[var(--crm-info-bg)]/30 p-3 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold text-foreground">Brouillon WhatsApp :</span>
+            <span className="text-foreground/90">
+              {draft.address || "Adresse non renseignée"},{" "}
+              {draft.cityName || "Ville non reconnue"}
+            </span>
+            {draft.readyToConfirm ? (
+              <span className="rounded-full border border-[var(--crm-success)]/40 bg-[var(--crm-success-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--crm-success)]">
+                Prêt à confirmer
+              </span>
+            ) : null}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={confirming || cancelling}
+            onClick={() => {
+              if (draft.address) setAddress(draft.address);
+              if (draft.cityId) setCityId(String(draft.cityId));
+              toast.info("Adresse et ville pré-remplies depuis le brouillon WhatsApp.");
+            }}
+            className="h-7 text-xs font-medium"
+          >
+            Utiliser
+          </Button>
+        </div>
+      ) : null}
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
