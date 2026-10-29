@@ -498,3 +498,35 @@ test("maintenance recovers stale sending rows to uncertain and stale inbound to 
   assert.equal(inRow.status, "pending");
   assert.equal(inRow.lease, null);
 });
+
+test("each claim reads a fresh clock after slow inbound processing", async () => {
+  const inboundProcessor = loadSource("@/lib/whatsapp/inbound-processor");
+  const originalProcess = inboundProcessor.processInboundEvent;
+  const originalClaim = outbox.claimNextOutbox;
+  const claimTimes = [];
+  inboundProcessor.processInboundEvent = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  };
+  outbox.claimNextOutbox = (now) => {
+    claimTimes.push(now.getTime());
+    return originalClaim(now);
+  };
+  try {
+    inboundEvents.storeInboundEvent({
+      eventType: "messages.upsert",
+      waMessageId: "in-msg-clock",
+      payload: {
+        key: { id: "in-msg-clock", remoteJid: "212600000006@s.whatsapp.net", fromMe: false },
+        pushName: "Hind",
+        message: { conversation: "Bonjour" },
+      },
+    });
+    const tickNow = new Date();
+    await waTick(tickNow);
+    assert.equal(claimTimes.length, 1);
+    assert.ok(claimTimes[0] - tickNow.getTime() >= 1100, `claim used ${claimTimes[0] - tickNow.getTime()}ms after tick start`);
+  } finally {
+    inboundProcessor.processInboundEvent = originalProcess;
+    outbox.claimNextOutbox = originalClaim;
+  }
+});

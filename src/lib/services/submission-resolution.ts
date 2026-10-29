@@ -3,6 +3,7 @@ import { z } from "@/lib/validation";
 import { getDb } from "@/lib/db";
 import { redactText } from "@/lib/shipping/redact";
 import { insertContact } from "@/lib/services/orders";
+import { notifyOrderShipped } from "@/lib/whatsapp/notify";
 
 /** Agent identity as provided by the auth session (only `id` is required). */
 export interface ResolutionActor {
@@ -149,6 +150,8 @@ export function resolveSubmission(
            SET status = 'submitted', tracking_number = ?, updated_at = ?
            WHERE id = ?`,
         ).run(trackingNumber, now, submission.id);
+        // Same outbox key as the worker's success path: never a second shipped message.
+        notifyOrderShipped(submission.order_id, trackingNumber);
       } else {
         db.prepare(
           `UPDATE courier_submissions

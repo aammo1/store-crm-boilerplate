@@ -350,7 +350,7 @@ export function onOrderRefused(orderId: string): void {
       });
       for (const adminPhone of settings.adminPhones) {
         enqueueGuarded({
-          dedupeKey: `admin:autoblock:${normalized}:${day}`,
+          dedupeKey: `admin:autoblock:${normalized}:${day}:${adminPhone}`,
           phone: adminPhone,
           purpose: "admin_alert",
           body,

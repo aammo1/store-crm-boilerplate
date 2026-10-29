@@ -10,6 +10,10 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-outbox-"));
 process.env.DELIVERY_PROVIDER = "mock";
 process.env.DB_PATH = path.join(dir, "crm.db");
 process.env.AUTH_SECRET = "x".repeat(40);
+process.env.EVOLUTION_BASE_URL = "http://evolution.internal:8080";
+process.env.EVOLUTION_INSTANCE = "test-instance";
+process.env.EVOLUTION_API_KEY = "evolution-ephemeral-key";
+process.env.WHATSAPP_WEBHOOK_SECRET = "w".repeat(40);
 process.env.CRM_PUBLIC_URL = "https://crm.example.test";
 process.env.SECURITY_ALLOWED_ORIGINS = "https://crm.example.test";
 
@@ -106,9 +110,12 @@ test("pacing: Casablanca parts, window boundaries at 08:59/09:00/20:59/21:00 and
   assert.equal(pacing.inWindow(atDay(DAY, "20:59"), "09:00", "21:00"), true);
   assert.equal(pacing.inWindow(atDay(DAY, "21:00"), "09:00", "21:00"), false);
 
-  // start >= end is treated as always open.
-  assert.equal(pacing.inWindow(atDay(DAY, "03:00"), "21:00", "09:00"), true);
-  assert.equal(pacing.inWindow(atDay(DAY, "12:00"), "09:00", "09:00"), true);
+  // start >= end is invalid: the default 09:00-21:00 applies, never "always open".
+  assert.equal(pacing.inWindow(atDay(DAY, "03:00"), "21:00", "09:00"), false);
+  assert.equal(pacing.inWindow(atDay(DAY, "12:00"), "21:00", "09:00"), true);
+  assert.equal(pacing.inWindow(atDay(DAY, "22:00"), "09:00", "09:00"), false);
+  assert.deepEqual(pacing.effectiveWindow("21:00", "09:00"), { start: "09:00", end: "21:00" });
+  assert.deepEqual(pacing.effectiveWindow("08:00", "20:00"), { start: "08:00", end: "20:00" });
 
   // Next opening: today when still ahead of the start, tomorrow otherwise.
   const beforeOpen = pacing.nextWindowOpen(atDay(DAY, "08:59"), "09:00");
@@ -325,8 +332,7 @@ test("daily cap defers cap-counting rows to tomorrow's opening; replies still go
 
 test("markOutboxRetry requeues with capped backoff and fails after 10 attempts", () => {
   resetOutbox();
-  // 00:00-00:00 means "always open", so real-clock tests stay time-of-day independent.
-  setSettings({ sendWindowStart: "00:00", sendWindowEnd: "00:00" });
+  setSettings({ sendWindowStart: "00:00", sendWindowEnd: "23:59" });
   outbox.enqueueOutbox({ dedupeKey: "t9:r", phone: PHONE_A, purpose: "ai_reply", body: "r" });
   const claimed = outbox.claimNextOutbox();
   assert.ok(claimed);
@@ -409,7 +415,7 @@ test("recoverStaleSending turns stale sending rows into uncertain", () => {
 
 test("resolveUncertain requeues, records manual sends and cancels", () => {
   resetOutbox();
-  setSettings({ sendWindowStart: "00:00", sendWindowEnd: "00:00" });
+  setSettings({ sendWindowStart: "00:00", sendWindowEnd: "23:59" });
   const resolver = insertUser("u-resolver");
   const convId = insertConversation(PHONE_CONV_A);
 
@@ -588,4 +594,104 @@ test("outboxStats summarises the queue against the daily cap", () => {
   // capRemaining never goes negative.
   setSettings({ dailyOutboundCap: 2 });
   assert.equal(outbox.outboxStats(now).capRemaining, 0);
+});
+
+test("enqueueOutbox stays inert when WhatsApp env is not configured", () => {
+  resetOutbox();
+  setSettings({ enabled: true, notificationsEnabled: true });
+  const saved = process.env.EVOLUTION_API_KEY;
+  delete process.env.EVOLUTION_API_KEY;
+  try {
+    assert.equal(outbox.enqueueOutbox({ dedupeKey: "t17:notify", phone: PHONE_A, purpose: "notify_confirmed", body: "Bonjour" }), false);
+    assert.equal(outbox.enqueueOutbox({ dedupeKey: "t17:admin", phone: PHONE_ADMIN, purpose: "admin_alert", body: "Alerte" }), false);
+    assert.equal(outboxCount(), 0);
+  } finally {
+    process.env.EVOLUTION_API_KEY = saved;
+  }
+  assert.equal(outbox.enqueueOutbox({ dedupeKey: "t17:notify", phone: PHONE_A, purpose: "notify_confirmed", body: "Bonjour" }), true);
+});
+
+test("enqueueOutbox rejects empty and oversized bodies without throwing", () => {
+  resetOutbox();
+  setSettings({ enabled: true, notificationsEnabled: true });
+  assert.equal(outbox.enqueueOutbox({ dedupeKey: "t18:empty", phone: PHONE_A, purpose: "ai_reply", body: "   " }), false);
+  assert.equal(outbox.enqueueOutbox({ dedupeKey: "t18:long", phone: PHONE_A, purpose: "ai_reply", body: "x".repeat(4097) }), false);
+  assert.equal(outbox.enqueueOutbox({ dedupeKey: "t18:max", phone: PHONE_A, purpose: "ai_reply", body: "x".repeat(4096) }), true);
+  assert.equal(outboxCount(), 1);
+});
+
+test("claimNextOutbox cancels queued rows past their max age instead of sending them", () => {
+  resetOutbox();
+  setSettings({ enabled: true, notificationsEnabled: true, sendWindowStart: "00:00", sendWindowEnd: "23:59" });
+  const old = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
+  const seed = (key, purpose, createdAt, extra = {}) =>
+    db.prepare(
+      "INSERT INTO wa_outbox (id, dedupe_key, phone, purpose, body, status, counts_toward_cap, available_at, created_at, updated_at, resolved_at) VALUES (?, ?, ?, ?, 'x', 'queued', 0, ?, ?, ?, ?)",
+    ).run(`id-${key}`, key, PHONE_A, purpose, createdAt, createdAt, createdAt, extra.resolvedAt ?? null);
+  seed("t19:notify-old", "notify_shipped", old(49));
+  seed("t19:relance-old", "relance_no_answer", old(72));
+  seed("t19:admin-old", "admin_alert", old(25));
+  seed("t19:ai-old", "ai_reply", old(2));
+  seed("t19:notify-fresh", "notify_shipped", old(20));
+  seed("t19:ai-fresh", "ai_reply", old(0.5));
+  seed("t19:requeued", "notify_confirmed", old(100), { resolvedAt: old(1) });
+
+  const claimed = outbox.claimNextOutbox();
+  assert.ok(claimed);
+  for (const key of ["t19:notify-old", "t19:relance-old", "t19:admin-old", "t19:ai-old"]) {
+    const row = rowByKey(key);
+    assert.equal(row.status, "cancelled", key);
+    assert.match(row.last_error, /expiré/);
+  }
+  for (const key of ["t19:notify-fresh", "t19:ai-fresh", "t19:requeued"]) {
+    assert.notEqual(rowByKey(key).status, "cancelled", key);
+  }
+});
+
+test("an invalid persisted send window falls back to 09:00-21:00 instead of always open", () => {
+  resetOutbox();
+  setSettings({ enabled: true, notificationsEnabled: true });
+  appState.setAppState(
+    settingsService.WHATSAPP_SETTINGS_KEY,
+    JSON.stringify({ ...settingsService.getWhatsAppSettings(), sendWindowStart: "21:00", sendWindowEnd: "09:00" }),
+  );
+  const stored = settingsService.getWhatsAppSettings();
+  assert.equal(stored.sendWindowStart, "09:00");
+  assert.equal(stored.sendWindowEnd, "21:00");
+
+  outbox.enqueueOutbox({ dedupeKey: "t20:n", phone: PHONE_A, purpose: "notify_confirmed", body: "x" });
+  const midnight = atDay(DAY, "03:00");
+  db.prepare("UPDATE wa_outbox SET available_at = ?").run(dueAt(midnight));
+  assert.equal(outbox.claimNextOutbox(midnight), null);
+  assert.equal(casablancaStamp(new Date(rowByKey("t20:n").available_at)), `${DAY} 09:00`);
+  setSettings({ sendWindowStart: "09:00", sendWindowEnd: "21:00" });
+});
+
+test("outbox error text is redacted and truncated", () => {
+  resetOutbox();
+  setSettings({ enabled: true, sendWindowStart: "00:00", sendWindowEnd: "23:59" });
+  const failWith = (key, text, mark) => {
+    outbox.enqueueOutbox({ dedupeKey: key, phone: PHONE_A, purpose: "ai_reply", body: "x" });
+    db.prepare("DELETE FROM app_state WHERE key = 'wa_next_send_at'").run();
+    const claimed = outbox.claimNextOutbox();
+    assert.ok(claimed && rowById(claimed.id).dedupe_key === key);
+    mark(claimed.id, claimed.lease, text);
+    return rowById(claimed.id);
+  };
+  const failed = failWith(
+    "t21:f",
+    "number 212600000010@s.whatsapp.net / +212 600 000 010 apikey evolution-ephemeral-key https://x.test/api?token=abc123",
+    outbox.markOutboxFailed,
+  );
+  assert.ok(!failed.last_error.includes("212600000010"));
+  assert.ok(!failed.last_error.includes("600 000 010"));
+  assert.ok(!failed.last_error.includes("evolution-ephemeral-key"));
+  assert.ok(!failed.last_error.includes("abc123"));
+
+  const uncertain = failWith("t21:u", "e".repeat(2000), outbox.markOutboxUncertain);
+  assert.equal(uncertain.status, "uncertain");
+  assert.equal(uncertain.last_error.length, 500);
+
+  const retried = failWith("t21:r", "refus +212600000010", outbox.markOutboxRetry);
+  assert.ok(!retried.last_error.includes("600000010"));
 });

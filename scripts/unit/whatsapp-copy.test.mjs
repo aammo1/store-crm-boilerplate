@@ -64,7 +64,8 @@ test("jidToPhone strips device suffix and rejects groups, broadcast, @lid, and n
 });
 
 test("orderRefFromOrderId extracts first 8 uppercase characters", () => {
-  assert.equal(phone.orderRefFromOrderId("ord_abcdef123456"), "ORD_ABCD");
+  // Manual orders (`ord_` + nanoid) use the part after the prefix.
+  assert.equal(phone.orderRefFromOrderId("ord_abcdef123456"), "ABCDEF12");
   assert.equal(phone.orderRefFromOrderId("a1b2c3d4e5f6"), "A1B2C3D4");
   assert.equal(phone.orderRefFromOrderId(""), "");
 });
@@ -82,6 +83,26 @@ test("ref extraction from text", () => {
   // Ignored if not 8 characters
   assert.deepEqual(phone.extractOrderRefs("court #A1B2 trop long #A1B2C3D4E5F6"), []);
   assert.deepEqual(phone.extractOrderRefs(""), []);
+});
+
+test("ref extraction only accepts hex refs, never plain 8-letter words", () => {
+  assert.deepEqual(phone.extractOrderRefs("Bonjour ma COMMANDE pourquoi POURQUOI"), []);
+  assert.deepEqual(phone.extractOrderRefs("DEADBEEF et FACADE12"), ["FACADE12"], "bare all-letter hex words need a digit");
+  assert.deepEqual(phone.extractOrderRefs("ref #DEADBEEF"), ["DEADBEEF"], "a # prefix accepts any 8 hex");
+  assert.deepEqual(phone.extractOrderRefs("mon numero 0612345678"), [], "a 10-digit phone is not an 8-char ref");
+  // Noise never crowds the real ref out of the cap of 3.
+  assert.deepEqual(
+    phone.extractOrderRefs("COMMANDE POURQUOI QUELLEES MERCIBCP ma ref a1b2c3d4"),
+    ["A1B2C3D4"],
+  );
+  // Manual-order refs (nanoid form, may hold _ or -) only count with a # prefix.
+  assert.deepEqual(phone.extractOrderRefs("ref #k3_xq9za"), ["K3_XQ9ZA"]);
+  assert.deepEqual(phone.extractOrderRefs("COMMANDE IPHONE15 k3_xq9za"), []);
+});
+
+test("orderRefSqlMatch treats the ref literally (no LIKE wildcards)", () => {
+  assert.ok(phone.orderRefSqlMatch().includes("substr"));
+  assert.ok(!phone.orderRefSqlMatch().includes("LIKE"));
 });
 
 test("extractLast4 finds a standalone 4-digit group", () => {

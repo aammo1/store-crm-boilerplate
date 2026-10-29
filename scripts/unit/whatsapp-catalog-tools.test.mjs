@@ -269,6 +269,39 @@ test("cards are deduped per day and carry the price, in-stock options, pack and 
   });
 });
 
+test("at most 3 product cards are queued per agent turn, across several calls", async () => {
+  insertProduct({
+    id: "p4", slug: "babouches-fes", name: "Babouches Fès", category: "Chaussures", price: 120,
+    description: "Babouches cuir", images: ["/api/media/photo-babouches.webp"],
+  });
+  insertVariant("v4", "p4", "Standard", []);
+  setStock("v4", 4);
+
+  const ctx = makeCtx();
+  const tools = catalogTools.createCatalogTools(ctx, FLAGS);
+  assert.deepEqual(await tools.sendProductCards.execute({ productSlugs: ["tshirt-amazigh", "sac-berbere"] }), {
+    sent: ["tshirt-amazigh", "sac-berbere"],
+    skipped: [],
+  });
+  assert.deepEqual(await tools.sendProductCards.execute({ productSlugs: ["chaussures-atlas", "babouches-fes"] }), {
+    sent: ["chaussures-atlas"],
+    skipped: ["babouches-fes"],
+  });
+  assert.equal(ctx.productCardsQueued, 3);
+  assert.deepEqual(await tools.sendProductCards.execute({ productSlugs: ["babouches-fes"] }), {
+    sent: [],
+    skipped: ["babouches-fes"],
+  });
+  assert.equal(cardRows().length, 3);
+
+  // A new turn starts again from zero.
+  const nextTurn = catalogTools.createCatalogTools(makeCtx(), FLAGS);
+  assert.deepEqual(await nextTurn.sendProductCards.execute({ productSlugs: ["babouches-fes"] }), {
+    sent: ["babouches-fes"],
+    skipped: [],
+  });
+});
+
 test("card captions follow the conversation language (Arabic for ar/darija_arabic)", async () => {
   const tools = catalogTools.createCatalogTools(makeCtx({ language: "darija_arabic" }), FLAGS);
   const result = await tools.sendProductCards.execute({ productSlugs: ["sac-berbere"] });

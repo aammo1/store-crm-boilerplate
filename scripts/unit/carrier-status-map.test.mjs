@@ -10,6 +10,10 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "carrier-status-map-"));
 process.env.DELIVERY_PROVIDER = "mock";
 process.env.DB_PATH = path.join(dir, "crm.db");
 process.env.AUTH_SECRET = "x".repeat(40);
+process.env.EVOLUTION_BASE_URL = "http://evolution.internal:8080";
+process.env.EVOLUTION_INSTANCE = "test-instance";
+process.env.EVOLUTION_API_KEY = "evolution-ephemeral-key";
+process.env.WHATSAPP_WEBHOOK_SECRET = "w".repeat(40);
 process.env.CRM_PUBLIC_URL = "https://crm.example.test";
 process.env.SECURITY_ALLOWED_ORIGINS = "https://crm.example.test";
 globalThis.fetch = async () => {
@@ -489,4 +493,21 @@ test("route GET & PUT /api/crm/carrier-statuses auth, origin and validation", as
   assert.equal(unmapPut.status, 200);
   assert.equal(mapping("mock", "VIA_API_STATUS").notify_category, null);
   assert.equal(mapping("mock", "VIA_API_STATUS").mapped_by, null);
+});
+
+test("conversation language is found for orders stored with a local 06… phone", () => {
+  settingsService.updateWhatsAppSettings({ enabled: true, notificationsEnabled: true });
+  const { orderId, subId } = submitted();
+  db.prepare("UPDATE orders SET customer_phone = '0600000001' WHERE id = ?").run(orderId);
+  db.prepare("INSERT OR REPLACE INTO wa_conversations (id, phone, language, created_at, updated_at) VALUES ('conv-ar-ofd', '+212600000001', 'ar', ?, ?)")
+    .run(now, now);
+  try {
+    service.setNotifyCategory("mock", "OFD_LOCAL_PHONE", "out_for_delivery", "admin-1");
+    assert.equal(service.maybeNotifyFromRawStatus(orderId, subId, "OFD_LOCAL_PHONE", "mock"), true);
+    const [row] = outboxRows(orderId);
+    assert.match(row.body, /[\u0600-\u06ff]/, "Arabic copy from the E.164 conversation");
+  } finally {
+    db.prepare("DELETE FROM wa_outbox WHERE order_id = ?").run(orderId);
+    db.prepare("DELETE FROM wa_conversations WHERE id = 'conv-ar-ofd'").run();
+  }
 });

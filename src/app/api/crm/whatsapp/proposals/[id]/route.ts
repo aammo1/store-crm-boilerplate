@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { AuthGuardError, requireUser } from "@/lib/auth-guards";
 import { readLimitedJson, RequestBodyError } from "@/lib/request-body";
 import { StagingError, approveProposal, rejectProposal } from "@/lib/services/whatsapp-staging";
+import { revalidateStorefront } from "@/lib/storefront/revalidate";
 import { z } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -43,6 +44,7 @@ export async function POST(
         parsed.data.action === "approve"
           ? approveProposal(id, actor)
           : rejectProposal(id, actor, parsed.data.note);
+      if (parsed.data.action === "approve") revalidateStorefront();
       return NextResponse.json({ proposal });
     } catch (error) {
       if (error instanceof StagingError) {

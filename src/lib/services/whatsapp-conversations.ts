@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { getDb } from "@/lib/db";
 import { normalizeMaPhoneCore } from "@/lib/phone-core";
-import { extractLast4, extractOrderRefs, orderRefFromOrderId } from "@/lib/whatsapp/phone";
+import { extractLast4, extractOrderRefs, orderRefFromOrderId, orderRefSqlMatch } from "@/lib/whatsapp/phone";
 
 export type WaLanguage = "fr" | "ar" | "darija_latin" | "darija_arabic";
 
@@ -279,7 +279,8 @@ export function getConversationByPhone(phone: string): WaConversation | null {
 /**
  * Inserts an inbound customer message into wa_messages.
  * Deduplicates by wa_message_id (returns { duplicate: true } without bumping unread count or preview).
- * On new message, increments unread_count, updates last_inbound_at and last_preview.
+ * On new message, increments unread_count, updates last_inbound_at and last_preview,
+ * and clears no_whatsapp (a customer who writes to us clearly has WhatsApp).
  */
 export function insertInboundMessage(input: {
   conversationId: string;
@@ -339,6 +340,7 @@ export function insertInboundMessage(input: {
     db.prepare(`
       UPDATE wa_conversations
       SET unread_count = unread_count + 1,
+          no_whatsapp = 0,
           last_inbound_at = ?,
           last_preview = COALESCE(?, last_preview),
           updated_at = ?
@@ -412,10 +414,13 @@ export function updateMessageMedia(
 /**
  * Returns messages in chronological order (oldest first, newest last).
  * Limit defaults to 50, maximum 200.
+ * With `includeUnsent` (first page only) the conversation's queued/sending/failed/uncertain
+ * outbox rows are merged in read-only as outbound views with ids `outbox:<id>`, so agents
+ * see sends that never reached wa_messages.
  */
 export function listMessages(
   conversationId: string,
-  opts?: { before?: string; limit?: number },
+  opts?: { before?: string; limit?: number; includeUnsent?: boolean },
 ): WaMessageView[] {
   const db = getDb();
   const limit = Math.min(Math.max(1, opts?.limit ?? 50), 200);
@@ -466,7 +471,7 @@ export function listMessages(
   const rows = db.prepare(query).all(...params) as MessageRow[];
   rows.reverse();
 
-  return rows.map((r) => ({
+  const views: WaMessageView[] = rows.map((r) => ({
     id: r.id,
     conversationId: r.conversation_id,
     direction: r.direction,
@@ -490,11 +495,105 @@ export function listMessages(
         : undefined,
     createdAt: r.created_at,
   }));
+
+  if (!opts?.includeUnsent || opts.before) return views;
+
+  const unsent = db
+    .prepare(
+      `SELECT o.id, o.purpose, o.kind, o.body, o.status, o.author_user_id, o.created_at
+       FROM wa_outbox o
+       WHERE o.conversation_id = ?
+         AND o.status IN ('queued','sending','failed','uncertain')
+         AND NOT EXISTS (SELECT 1 FROM wa_messages m WHERE m.outbox_id = o.id)
+       ORDER BY o.created_at DESC, o.id DESC
+       LIMIT ?`,
+    )
+    .all(conversationId, limit) as Array<{
+    id: string;
+    purpose: string;
+    kind: "text" | "image";
+    body: string;
+    status: WaOutboxStatus;
+    author_user_id: string | null;
+    created_at: string;
+  }>;
+  if (unsent.length === 0) return views;
+
+  for (const o of unsent) {
+    views.push({
+      id: `outbox:${o.id}`,
+      conversationId,
+      direction: "out",
+      author: o.purpose === "agent_reply" ? "agent" : o.purpose === "ai_reply" || o.purpose === "product_card" ? "ai" : "system",
+      authorUserId: o.author_user_id ?? null,
+      waMessageId: null,
+      kind: o.kind,
+      body: o.body,
+      transcript: null,
+      mediaPath: null,
+      mediaMime: null,
+      mediaSha256: null,
+      mediaBytes: null,
+      mediaDeletedAt: null,
+      outboxId: o.id,
+      status: o.status,
+      createdAt: o.created_at,
+    });
+  }
+  views.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+  return views.slice(-limit);
+}
+
+/** Outbound AI/agent replies still waiting in (or in doubt at) the outbox: not yet recorded in wa_messages. */
+interface PendingReply {
+  body: string;
+  author: "ai" | "agent";
+  created_at: string;
+}
+
+/**
+ * Read-only view of queued/sending/uncertain ai/agent outbox rows for a
+ * conversation. They are answers the customer has not seen yet (pacing gap), so
+ * the unreplied-tail cutoff and the prompt context must count them.
+ */
+export function pendingOutboundReplies(conversationId: string): PendingReply[] {
+  return getDb()
+    .prepare(
+      `SELECT body, CASE WHEN purpose = 'agent_reply' THEN 'agent' ELSE 'ai' END AS author, created_at
+       FROM wa_outbox
+       WHERE purpose IN ('ai_reply','agent_reply','product_card')
+         AND status IN ('queued','sending','uncertain')
+         AND (conversation_id = ?
+              OR (conversation_id IS NULL AND phone = (SELECT phone FROM wa_conversations WHERE id = ?)))
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(conversationId, conversationId) as PendingReply[];
+}
+
+/** True when an AI reply for this inbound message is already in the outbox (queued, sent or doubtful). */
+export function hasAiReplyForMessage(messageId: string): boolean {
+  return Boolean(
+    getDb()
+      .prepare(
+        `SELECT 1 FROM wa_outbox
+         WHERE substr(dedupe_key, 1, ?) = ? AND status NOT IN ('failed','cancelled')
+         LIMIT 1`,
+      )
+      .get(`msg:${messageId}:reply:`.length, `msg:${messageId}:reply:`),
+  );
+}
+
+/** True when a strike with this reason was already recorded for this inbound message. */
+export function strikeRecordedForMessage(messageId: string, reason: string): boolean {
+  return Boolean(
+    getDb().prepare("SELECT 1 FROM wa_strikes WHERE message_id = ? AND reason_code = ? LIMIT 1").get(messageId, reason),
+  );
 }
 
 /**
  * Returns recent message context for the AI prompt in chronological order.
  * Maps customer messages to "user" and agent/ai/system to "assistant".
+ * Queued (not yet sent) ai/agent replies are included as assistant turns.
  */
 export function recentContext(
   conversationId: string,
@@ -521,7 +620,7 @@ export function recentContext(
 
   rows.reverse();
 
-  return rows.map((r) => {
+  const turns = rows.map((r) => {
     const role: "user" | "assistant" = r.author === "customer" ? "user" : "assistant";
     let text = r.body ?? r.transcript;
     if (!text) {
@@ -535,6 +634,14 @@ export function recentContext(
       at: r.created_at,
     };
   });
+
+  const pending = pendingOutboundReplies(conversationId).map((p) => ({
+    role: "assistant" as const,
+    text: p.body,
+    at: p.created_at,
+  }));
+  if (pending.length === 0) return turns;
+  return [...turns, ...pending].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).slice(-limit);
 }
 
 /**
@@ -610,7 +717,7 @@ export function flagHandoff(conversationId: string, reason: string): void {
  * Automatically releases stale human conversations back to AI if:
  * - mode is 'human'
  * - needs_human is 0 (i.e. not waiting for an unassigned agent escalation)
- * - last agent activity (last_agent_reply_at or taken_over_at) is older than `hours`
+ * - last agent activity (the later of last_agent_reply_at and taken_over_at) is older than `hours`
  */
 export function autoReleaseStale(hours: number, now?: Date): number {
   const db = getDb();
@@ -627,7 +734,13 @@ export function autoReleaseStale(hours: number, now?: Date): number {
         updated_at = ?
     WHERE mode = 'human'
       AND needs_human = 0
-      AND COALESCE(last_agent_reply_at, taken_over_at) < ?
+      AND (
+        CASE
+          WHEN last_agent_reply_at IS NULL THEN taken_over_at
+          WHEN taken_over_at IS NULL THEN last_agent_reply_at
+          ELSE max(last_agent_reply_at, taken_over_at)
+        END
+      ) < ?
   `).run(nowIso, cutoff);
 
   return info.changes;
@@ -739,7 +852,8 @@ export function logOrderContact(orderId: string, agentId: string | null, note: s
  * - Order phone matches conversation phone -> full access ('ref_message')
  * - Different phone and last 4 digits match -> status_only access ('ref_last4')
  * - No match / invalid ref -> failure.
- * - 3 consecutive messages with refs and zero successful links lock identity checks for 24h.
+ * - Every ref that links nothing is a failed attempt; 3 failed attempts lock identity checks for 24h
+ *   (the counter resets only on a message whose refs all linked).
  */
 export function linkOrdersFromMessage(
   conversationId: string,
@@ -772,20 +886,18 @@ export function linkOrdersFromMessage(
       return { linked: [], failed: false, locked: false, newlyLocked: false };
     }
 
-    // 3. For each ref, match orders
+    // 3. For each ref, match orders; a ref that links nothing is one failed attempt
     const last4 = extractLast4(text);
     const linked: Array<{ orderId: string; access: "full" | "status_only" }> = [];
     const convPhone = conv.phone;
+    let failedRefs = 0;
 
     for (const ref of refs) {
       const orders = db
-        .prepare("SELECT id, customer_phone FROM orders WHERE upper(id) LIKE ? || '%' AND archived_at IS NULL")
-        .all(ref) as Array<{ id: string; customer_phone: string }>;
+        .prepare(`SELECT id, customer_phone FROM orders WHERE ${orderRefSqlMatch()} AND archived_at IS NULL`)
+        .all(ref, ref) as Array<{ id: string; customer_phone: string }>;
 
-      if (orders.length === 0) {
-        continue;
-      }
-
+      let refLinked = false;
       for (const order of orders) {
         let access: "full" | "status_only" | null = null;
         let linkedVia: "ref_message" | "ref_last4" | null = null;
@@ -803,6 +915,7 @@ export function linkOrdersFromMessage(
         }
 
         if (access && linkedVia) {
+          refLinked = true;
           // Access never downgrades: report the effective (highest) access.
           const existing = db
             .prepare("SELECT access FROM wa_conversation_orders WHERE conversation_id = ? AND order_id = ?")
@@ -822,11 +935,13 @@ export function linkOrdersFromMessage(
           }
         }
       }
+      if (!refLinked) failedRefs += 1;
     }
 
-    // 4. If message has refs but no successful link: increment failure counter
-    if (linked.length === 0) {
-      const failures = conv.identity_failures + 1;
+    // 4. Every unmatched ref counts as a failed attempt, even when another ref in
+    // the same message linked, so a message cannot launder guesses behind its own ref.
+    if (failedRefs > 0) {
+      const failures = conv.identity_failures + failedRefs;
       if (failures >= 3) {
         const lockedUntil = new Date(currentDate.getTime() + 24 * 3600 * 1000).toISOString();
         db.prepare(`
@@ -837,20 +952,19 @@ export function linkOrdersFromMessage(
           WHERE id = ?
         `).run(lockedUntil, nowIso, conversationId);
 
-        return { linked: [], failed: true, locked: true, newlyLocked: true };
-      } else {
-        db.prepare(`
-          UPDATE wa_conversations
-          SET identity_failures = ?,
-              updated_at = ?
-          WHERE id = ?
-        `).run(failures, nowIso, conversationId);
-
-        return { linked: [], failed: true, locked: false, newlyLocked: false };
+        return { linked, failed: true, locked: true, newlyLocked: true };
       }
+      db.prepare(`
+        UPDATE wa_conversations
+        SET identity_failures = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(failures, nowIso, conversationId);
+
+      return { linked, failed: true, locked: false, newlyLocked: false };
     }
 
-    // Reset failure counter on success
+    // Reset failure counter on a message whose refs all linked
     if (conv.identity_failures > 0) {
       db.prepare("UPDATE wa_conversations SET identity_failures = 0, updated_at = ? WHERE id = ?").run(
         nowIso,

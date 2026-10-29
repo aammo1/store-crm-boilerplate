@@ -10,6 +10,10 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-settings-"));
 process.env.DELIVERY_PROVIDER = "mock";
 process.env.DB_PATH = path.join(dir, "crm.db");
 process.env.AUTH_SECRET = "x".repeat(40);
+process.env.EVOLUTION_BASE_URL = "http://evolution.internal:8080";
+process.env.EVOLUTION_INSTANCE = "test-instance";
+process.env.EVOLUTION_API_KEY = "evolution-ephemeral-key";
+process.env.WHATSAPP_WEBHOOK_SECRET = "w".repeat(40);
 process.env.CRM_PUBLIC_URL = "https://crm.example.test";
 process.env.SECURITY_ALLOWED_ORIGINS = "https://crm.example.test";
 
@@ -352,4 +356,50 @@ test("route GET & PUT /api/crm/whatsapp/settings auth, origin, and validation", 
   assert.equal(validPutBody.settings.enabled, true);
   assert.equal(validPutBody.settings.assistantName, "Sara");
   assert.deepEqual(validPutBody.settings.adminPhones, ["+212612345678"]);
+});
+
+test("enabling WhatsApp is refused while the server is not configured", () => {
+  service.updateWhatsAppSettings({ enabled: false });
+  const saved = process.env.EVOLUTION_BASE_URL;
+  delete process.env.EVOLUTION_BASE_URL;
+  try {
+    assert.throws(
+      () => service.updateWhatsAppSettings({ enabled: true }),
+      (error) => error.name === "WhatsAppSettingsError" && error.field === "enabled" && /pas configuré/.test(error.message),
+    );
+    assert.equal(service.getWhatsAppSettings().enabled, false);
+    // Other fields stay editable while unconfigured.
+    assert.equal(service.updateWhatsAppSettings({ dailyOutboundCap: 55 }).dailyOutboundCap, 55);
+  } finally {
+    process.env.EVOLUTION_BASE_URL = saved;
+  }
+  assert.equal(service.updateWhatsAppSettings({ enabled: true }).enabled, true);
+  service.updateWhatsAppSettings({ enabled: false });
+});
+
+test("send window must start before it ends, also when only one bound is updated", () => {
+  service.updateWhatsAppSettings({ sendWindowStart: "08:00", sendWindowEnd: "20:00" });
+  const rejects = (patch) =>
+    assert.throws(
+      () => service.updateWhatsAppSettings(patch),
+      (error) => error.name === "ZodError" && /précéder/.test(error.issues[0].message),
+    );
+  rejects({ sendWindowStart: "22:00", sendWindowEnd: "08:00" });
+  rejects({ sendWindowStart: "10:00", sendWindowEnd: "10:00" });
+  rejects({ sendWindowEnd: "07:00" });
+  rejects({ sendWindowStart: "20:30" });
+  assert.equal(service.getWhatsAppSettings().sendWindowStart, "08:00");
+  assert.equal(service.getWhatsAppSettings().sendWindowEnd, "20:00");
+  service.updateWhatsAppSettings({ sendWindowStart: "09:00", sendWindowEnd: "21:00" });
+});
+
+test("a corrupt persisted window recovers to the default window", () => {
+  db.prepare("UPDATE app_state SET value = ? WHERE key = ?").run(
+    JSON.stringify({ ...service.getWhatsAppSettings(), sendWindowStart: "22:00", sendWindowEnd: "06:00", dailyOutboundCap: 12 }),
+    service.WHATSAPP_SETTINGS_KEY,
+  );
+  const recovered = service.getWhatsAppSettings();
+  assert.equal(recovered.sendWindowStart, "09:00");
+  assert.equal(recovered.sendWindowEnd, "21:00");
+  assert.equal(recovered.dailyOutboundCap, 12);
 });

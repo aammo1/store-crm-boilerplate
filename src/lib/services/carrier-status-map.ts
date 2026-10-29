@@ -2,6 +2,7 @@ import rawStoreConfig from "../../../store.config";
 import { getDb } from "@/lib/db";
 import { deliveryProviderName } from "@/lib/env";
 import { log } from "@/lib/log";
+import { normalizeMaPhoneCore } from "@/lib/phone-core";
 import { msgDeliveryIssue, msgOutForDelivery, type Ctx } from "@/lib/whatsapp/copy";
 import { casablancaParts } from "@/lib/whatsapp/pacing";
 import { orderRefFromOrderId } from "@/lib/whatsapp/phone";
@@ -234,9 +235,10 @@ function conversationLocale(
   db: ReturnType<typeof getDb>,
   phone: string,
 ): "fr" | "ar" | null {
+  const normalized = normalizeMaPhoneCore(phone);
   const row = db
-    .prepare("SELECT language FROM wa_conversations WHERE phone = ?")
-    .get(phone) as { language: string | null } | undefined;
+    .prepare("SELECT language FROM wa_conversations WHERE phone = ? OR phone = ?")
+    .get(...(normalized ? [normalized, phone] : [phone, phone])) as { language: string | null } | undefined;
   switch (row?.language) {
     case "ar":
     case "darija_arabic":

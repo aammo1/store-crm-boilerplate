@@ -130,3 +130,35 @@ test("cancelling a needs_review order keeps stock reserved until resolved; queue
   cancelOrder(failed.id, { reason: "client" }, actor);
   assert.deepEqual(reserved(failed.id), ["released"]);
 });
+
+test("attaching an existing parcel queues one shipped notification, deduped with the worker path", () => {
+  const settings = loadSource("@/lib/services/whatsapp-settings");
+  const { notifyOrderShipped } = loadSource("@/lib/whatsapp/notify");
+  Object.assign(process.env, {
+    EVOLUTION_BASE_URL: "http://evolution.internal:8080",
+    EVOLUTION_INSTANCE: "test-instance",
+    EVOLUTION_API_KEY: "evolution-ephemeral-key",
+    WHATSAPP_WEBHOOK_SECRET: "w".repeat(40),
+  });
+  settings.updateWhatsAppSettings({ enabled: true, notificationsEnabled: true });
+  try {
+    const shipped = (id) => db.prepare("SELECT * FROM wa_outbox WHERE dedupe_key = ?").all(`order:${id}:shipped`);
+    const none = confirmed("needs_review");
+    resolveSubmission(none.submissionId, { outcome: "no_parcel", evidence }, actor);
+    assert.equal(shipped(none.id).length, 0, "requeue sends no shipped message");
+
+    const { id, submissionId } = confirmed("needs_review");
+    resolveSubmission(submissionId, { outcome: "parcel_exists", trackingNumber: "OZ-777888", evidence }, actor);
+    const rows = shipped(id);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].purpose, "notify_shipped");
+    assert.equal(rows[0].order_id, id);
+    assert.ok(rows[0].body.includes("OZ-777888"));
+
+    notifyOrderShipped(id, "OZ-777888");
+    assert.equal(shipped(id).length, 1, "the worker's notification for the same order is a no-op");
+  } finally {
+    settings.updateWhatsAppSettings({ enabled: false });
+    for (const key of ["EVOLUTION_BASE_URL", "EVOLUTION_INSTANCE", "EVOLUTION_API_KEY", "WHATSAPP_WEBHOOK_SECRET"]) delete process.env[key];
+  }
+});

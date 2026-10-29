@@ -33,10 +33,15 @@ export const whatsappSettingsBaseSchema = z
   })
   .strict();
 
-export const whatsappSettingsSchema = whatsappSettingsBaseSchema.refine(
-  (s) => s.minGapSeconds <= s.maxGapSeconds,
-  { message: "Écart minimum supérieur au maximum.", path: ["minGapSeconds"] },
-);
+export const whatsappSettingsSchema = whatsappSettingsBaseSchema
+  .refine((s) => s.minGapSeconds <= s.maxGapSeconds, {
+    message: "Écart minimum supérieur au maximum.",
+    path: ["minGapSeconds"],
+  })
+  .refine((s) => s.sendWindowStart < s.sendWindowEnd, {
+    message: "L’heure de début d’envoi doit précéder l’heure de fin.",
+    path: ["sendWindowStart"],
+  });
 
 export const whatsappSettingsUpdateSchema = whatsappSettingsBaseSchema.partial().strict();
 

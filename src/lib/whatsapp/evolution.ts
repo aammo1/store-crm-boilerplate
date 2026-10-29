@@ -278,6 +278,12 @@ async function readResponseText(
     return "";
   }
 
+  // A body that dies mid-stream after a 2xx send may already have been delivered.
+  const readFailure = (err: unknown): WhatsAppError =>
+    err instanceof WhatsAppError
+      ? err
+      : makeWhatsAppError(isSend && response.ok ? "unknown" : "retryable", "response_read_failed", apiKey, response.status);
+
   if (typeof response.body.getReader === "function") {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -309,11 +315,16 @@ async function readResponseText(
       return chunks.join("");
     } catch (err) {
       if (err instanceof WhatsAppError) throw err;
-      throw err;
+      throw readFailure(err);
     }
   }
 
-  const text = await response.text();
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (err) {
+    throw readFailure(err);
+  }
   const byteLen = Buffer.byteLength(text, "utf8");
   if (byteLen > maxBytes) {
     if (isMedia) {

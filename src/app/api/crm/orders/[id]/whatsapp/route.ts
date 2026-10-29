@@ -39,14 +39,14 @@ export async function GET(
         `SELECT c.id FROM wa_conversations c
          JOIN wa_conversation_orders co ON co.conversation_id = c.id
          WHERE co.order_id = ?
-         ORDER BY c.updated_at DESC
+         ORDER BY (co.access = 'full') DESC, c.updated_at DESC
          LIMIT 1`,
       )
       .get(id) as { id: string } | undefined;
     if (linked && canAccessConversation(linked.id, user.id, user.role)) {
       conversation = getConversation(linked.id);
       if (conversation) {
-        messages = listMessages(linked.id, { limit: 20 });
+        messages = listMessages(linked.id, { limit: 20, includeUnsent: true });
       }
     }
 

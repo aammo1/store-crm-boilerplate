@@ -59,19 +59,31 @@ export function casablancaDateTimeToDate(dateStr: string, timeStr: string): Date
   return d;
 }
 
+const DEFAULT_WINDOW = { start: "09:00", end: "21:00" } as const;
+
+function windowMinutes(value: string): number {
+  const [h, m] = value.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/** Returns the given window when valid (start < end), else the default 09:00-21:00. */
+export function effectiveWindow(start: string, end: string): { start: string; end: string } {
+  const startMin = windowMinutes(start);
+  const endMin = windowMinutes(end);
+  if (!Number.isFinite(startMin) || !Number.isFinite(endMin) || startMin >= endMin) {
+    return { ...DEFAULT_WINDOW };
+  }
+  return { start, end };
+}
+
 /**
  * Checks if `now` falls in `[start, end)` in Africa/Casablanca time.
- * Supports start < end; if start >= end, treats as always-open (returns true).
+ * An invalid window (start >= end) falls back to the default 09:00-21:00.
  */
 export function inWindow(now: Date, start: string, end: string): boolean {
-  const [startH, startM] = start.split(":").map(Number);
-  const [endH, endM] = end.split(":").map(Number);
-  const startMin = startH * 60 + startM;
-  const endMin = endH * 60 + endM;
-
-  if (startMin >= endMin) {
-    return true;
-  }
+  const win = effectiveWindow(start, end);
+  const startMin = windowMinutes(win.start);
+  const endMin = windowMinutes(win.end);
 
   const { minutes } = casablancaParts(now);
   return minutes >= startMin && minutes < endMin;

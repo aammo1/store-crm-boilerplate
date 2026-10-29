@@ -52,32 +52,52 @@ export function jidToPhone(jid: string): string | null {
   return normalizeMaPhoneCore(rawNumber);
 }
 
+const MANUAL_ORDER_PREFIX = "ord_";
+
 /**
  * Derives the 8-character uppercase customer-facing reference from an order ID.
+ * Manual orders (`ord_` + nanoid) skip the prefix so their ref is not the constant "ORD_".
  */
 export function orderRefFromOrderId(orderId: string): string {
   if (!orderId) return "";
-  return orderId.slice(0, 8).toUpperCase();
+  const core =
+    orderId.startsWith(MANUAL_ORDER_PREFIX) && orderId.length > MANUAL_ORDER_PREFIX.length
+      ? orderId.slice(MANUAL_ORDER_PREFIX.length)
+      : orderId;
+  return core.slice(0, 8).toUpperCase();
 }
 
 /**
- * Finds up to 3 deduplicated 8-character alphanumeric order references
- * from user text (e.g. "salam #a1b2c3d4 merci" -> ["A1B2C3D4"]).
+ * SQL predicate (one `?` for the uppercase ref) matching `orderRefFromOrderId`
+ * on an id column; substr equality so `_` is never a LIKE wildcard.
+ */
+export function orderRefSqlMatch(column = "id"): string {
+  return `(upper(substr(${column}, 1, 8)) = ? OR (substr(${column}, 1, 4) = '${MANUAL_ORDER_PREFIX}' AND upper(substr(${column}, 5, 8)) = ?))`;
+}
+
+/**
+ * Finds up to 3 deduplicated order reference candidates in user text
+ * (e.g. "salam #a1b2c3d4 merci" -> ["A1B2C3D4"]). UUID refs are 8 hex
+ * characters: a bare token must be 8 hex with at least one digit, so words like
+ * "COMMANDE" or "FACADE" never count; a `#` prefix accepts any 8 hex and also
+ * the 8-character nanoid form of manual orders. Candidates are filtered before
+ * the cap so noise cannot crowd out the real reference.
  */
 export function extractOrderRefs(text: string): string[] {
   if (!text) return [];
   const upper = text.toUpperCase();
-  const regex = /#?\b([A-Z0-9]{8})\b/g;
-  const matches = upper.matchAll(regex);
+  const regex = /(#?)(?<![A-Z0-9_])([A-Z0-9_-]{8})(?![A-Z0-9_])(?!-[A-Z0-9])/g;
   const seen = new Set<string>();
   const results: string[] = [];
-  for (const m of matches) {
-    const ref = m[1];
-    if (!seen.has(ref)) {
-      seen.add(ref);
-      results.push(ref);
-      if (results.length === 3) break;
-    }
+  for (const m of upper.matchAll(regex)) {
+    const hashed = m[1] === "#";
+    const ref = m[2];
+    const isHex = /^[0-9A-F]{8}$/.test(ref);
+    const ok = hashed ? /[A-Z0-9]/.test(ref) : isHex && /\d/.test(ref);
+    if (!ok || seen.has(ref)) continue;
+    seen.add(ref);
+    results.push(ref);
+    if (results.length === 3) break;
   }
   return results;
 }

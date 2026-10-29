@@ -887,3 +887,178 @@ test("contact log covers a full-access order linked by the message itself", asyn
   assert.equal(contacts[0].note, "WhatsApp : message client");
   assert.equal(outboxForConv(conv.id).length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Audit regressions: retried events, genuine redelivery, debounce, queued tail
+// ---------------------------------------------------------------------------
+
+function requeueEvent(eventId) {
+  db.prepare("UPDATE wa_inbound_events SET status = 'pending', lease = NULL, available_at = ? WHERE id = ?")
+    .run(new Date(Date.now() - 1000).toISOString(), eventId);
+  return events.claimNextInboundEvent(new Date());
+}
+
+test("a retried media event continues the remaining steps once, and later replays add nothing", async () => {
+  const phoneLocal = "00000120";
+  const phone = phoneOf(phoneLocal);
+  enableAi();
+  fetchQueue.push(() => new Response("boom", { status: 500 }));
+
+  const first = await storeAndProcess(
+    messagePayload({ id: "retry-aud-1", phoneLocal, audio: 6, timestampSeconds: Math.floor(Date.now() / 1000) - 10 }),
+    { waMessageId: "retry-aud-1" },
+  );
+  assert.equal(first.result, "retry");
+  assert.equal(messageByWaId("retry-aud-1").media_path, null);
+
+  fetchQueue.push(
+    () => jsonOk({ base64: Buffer.concat([Buffer.from("OggS", "latin1"), Buffer.alloc(64, 9)]).toString("base64"), mimetype: "audio/ogg; codecs=opus" }),
+    () => chatCompletion('{"transcript":"wach kayn stock","language":"fr"}'),
+    () => chatCompletion("Oui, nous avons du stock."),
+  );
+  const claimed = events.claimNextInboundEvent(new Date(Date.now() + 60 * 60 * 1000));
+  assert.ok(claimed && claimed.id === first.eventId);
+  assert.equal(claimed.attempts, 2);
+  assert.equal(await processor.processInboundEvent(claimed), "done");
+
+  const stored = messageByWaId("retry-aud-1");
+  assert.ok(stored.media_path.startsWith("wa/"));
+  assert.equal(stored.transcript, "wach kayn stock");
+  const conv = conversationRow(phone);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM wa_messages WHERE conversation_id = ?").get(conv.id).n, 1);
+  assert.equal(outboxForConv(conv.id).filter((row) => row.purpose === "ai_reply").length, 1);
+  const callsAfterRetry = fetchCalls.length;
+
+  // A further replay (e.g. stale-lease recovery after the reply was queued) is a no-op.
+  const replay = requeueEvent(first.eventId);
+  assert.equal(replay.attempts, 3);
+  assert.equal(await processor.processInboundEvent(replay), "done");
+  assert.equal(fetchCalls.length, callsAfterRetry);
+  assert.equal(outboxForConv(conv.id).filter((row) => row.purpose === "ai_reply").length, 1);
+});
+
+test("a genuine redelivery of a fully processed message is skipped exactly once", async () => {
+  const phoneLocal = "00000121";
+  const phone = phoneOf(phoneLocal);
+  enableAi();
+  fetchQueue.push(() => chatCompletion("Bonjour."));
+  const payload = messagePayload({ id: "redeliver-1", phoneLocal, text: "salam", timestampSeconds: Math.floor(Date.now() / 1000) - 10 });
+  const first = await storeAndProcess(payload, { waMessageId: "redeliver-1" });
+  assert.equal(first.result, "done");
+
+  // The original event row was purged; Evolution redelivers the same message.
+  db.prepare("DELETE FROM wa_inbound_events WHERE id = ?").run(first.eventId);
+  const callsBefore = fetchCalls.length;
+  const second = await storeAndProcess(payload, { waMessageId: "redeliver-1" });
+  assert.equal(second.result, "done");
+  assert.equal(eventRow(second.eventId).status, "done");
+  assert.equal(fetchCalls.length, callsBefore);
+  const conv = conversationRow(phone);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM wa_messages WHERE conversation_id = ?").get(conv.id).n, 1);
+  assert.equal(outboxForConv(conv.id).length, 1);
+});
+
+test("a retried abusive message adds no second strike and no second warning", async () => {
+  const phoneLocal = "00000122";
+  const phone = phoneOf(phoneLocal);
+  enableAi();
+  classifyBehavior = classify({ category: "insult" });
+  const first = await storeAndProcess(
+    messagePayload({ id: "retry-insult-1", phoneLocal, text: "insulte", timestampSeconds: Math.floor(Date.now() / 1000) - 10 }),
+    { waMessageId: "retry-insult-1" },
+  );
+  assert.equal(first.result, "done");
+  assert.equal(strikeCount(phone, "insult"), 1);
+
+  const replay = requeueEvent(first.eventId);
+  assert.equal(replay.attempts, 2);
+  assert.equal(await processor.processInboundEvent(replay), "done");
+  assert.equal(strikeCount(phone, "insult"), 1);
+  const warnings = outboxForConv(conversationRow(phone).id).filter((row) => row.purpose === "strike_warning");
+  assert.equal(warnings.length, 1);
+});
+
+test("debounce ignores later reactions and own messages, but still yields to a later real message", async () => {
+  const phoneLocal = "00000123";
+  const phone = phoneOf(phoneLocal);
+  enableAi();
+  const t1 = new Date(Date.now() - 6_000);
+  const ts = Math.floor(Date.now() / 1000) - 10;
+  events.storeInboundEvent({
+    eventType: "messages.upsert",
+    waMessageId: "dbk-1",
+    payload: messagePayload({ id: "dbk-1", phoneLocal, text: "ou est mon colis ?", timestampSeconds: ts }),
+    now: t1,
+  });
+  events.storeInboundEvent({
+    eventType: "messages.upsert",
+    waMessageId: "dbk-react",
+    payload: { key: { remoteJid: jidOf(phoneLocal), fromMe: false, id: "dbk-react" }, message: { reactionMessage: { text: "👍" } } },
+    now: new Date(Date.now() - 5_000),
+  });
+  events.storeInboundEvent({
+    eventType: "messages.upsert",
+    waMessageId: "dbk-own",
+    payload: messagePayload({ id: "dbk-own", phoneLocal, text: "reponse de l'agent", fromMe: true }),
+    now: new Date(Date.now() - 4_000),
+  });
+
+  fetchQueue.push(() => chatCompletion("Il arrive demain."));
+  const claimed = events.claimNextInboundEvent(t1);
+  assert.equal(claimed.payload.key.id, "dbk-1");
+  assert.equal(await processor.processInboundEvent(claimed), "done");
+  const conv = conversationRow(phone);
+  assert.equal(outboxForConv(conv.id).filter((row) => row.purpose === "ai_reply").length, 1, "the real message gets its reply");
+
+  // A later answerable event still makes an earlier one stay silent.
+  events.storeInboundEvent({
+    eventType: "messages.upsert",
+    waMessageId: "dbk-2",
+    payload: messagePayload({ id: "dbk-2", phoneLocal, text: "premier", timestampSeconds: ts }),
+    now: new Date(Date.now() - 2_000),
+  });
+  events.storeInboundEvent({
+    eventType: "messages.upsert",
+    waMessageId: "dbk-3",
+    payload: messagePayload({ id: "dbk-3", phoneLocal, text: "second", timestampSeconds: ts }),
+    now: new Date(Date.now() - 1_000),
+  });
+  const callsBefore = fetchCalls.length;
+  const older = events.claimNextInboundEvent(new Date());
+  // Drain skip events first so the claimed one is dbk-2.
+  let current = older;
+  while (current && current.payload.key.id !== "dbk-2") {
+    await processor.processInboundEvent(current);
+    current = events.claimNextInboundEvent(new Date());
+  }
+  assert.equal(await processor.processInboundEvent(current), "done");
+  assert.equal(fetchCalls.length, callsBefore, "dbk-2 stays silent behind dbk-3");
+});
+
+test("a second message during a pacing gap does not re-answer the already queued reply", async () => {
+  const phoneLocal = "00000124";
+  const phone = phoneOf(phoneLocal);
+  enableAi();
+  const ts = Math.floor(Date.now() / 1000);
+  fetchQueue.push(() => chatCompletion("Reponse au premier."));
+  await storeAndProcess(
+    messagePayload({ id: "gap-1", phoneLocal, text: "question numero un", timestampSeconds: ts - 60 }),
+    { waMessageId: "gap-1" },
+  );
+  const conv = conversationRow(phone);
+  assert.equal(outboxForConv(conv.id).filter((row) => row.status === "queued").length, 1);
+
+  fetchQueue.push(() => chatCompletion("Reponse au second."));
+  const callsBefore = fetchCalls.length;
+  await storeAndProcess(
+    messagePayload({ id: "gap-2", phoneLocal, text: "question numero deux", timestampSeconds: ts - 1 }),
+    { waMessageId: "gap-2" },
+  );
+  const body = JSON.parse(fetchCalls[callsBefore].init.body);
+  const turns = body.messages.filter((m) => m.role !== "system");
+  const last = JSON.stringify(turns[turns.length - 1]);
+  assert.ok(last.includes("question numero deux"));
+  assert.ok(!last.includes("question numero un"), "the answered question is not part of the new tail");
+  const context = JSON.stringify(turns.slice(0, -1));
+  assert.ok(context.includes("Reponse au premier."), "the queued reply is part of the prompt context");
+});

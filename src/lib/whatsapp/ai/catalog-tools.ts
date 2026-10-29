@@ -32,6 +32,8 @@ import { MAX_TOOL_CALLS_PER_TURN, type WhatsAppToolsContext } from "./tools";
 
 /** Hard cap of one card caption (WhatsApp shows long captions badly). */
 const MAX_CAPTION_CHARS = 1000;
+/** Product cards allowed per agent turn, across all sendProductCards calls. */
+const MAX_PRODUCT_CARDS_PER_TURN = 3;
 /** Below this normalized token overlap a photo match is refused instead of guessed. */
 const PHOTO_MATCH_THRESHOLD = 0.35;
 /** app_state key holding the one-shot cross-sell marker per conversation. */
@@ -309,6 +311,10 @@ export function createCatalogTools(ctx: CatalogToolsContext, flags?: CatalogTool
             const slug = rawSlug.trim();
             if (!slug || seen.has(slug)) continue;
             seen.add(slug);
+            if (ctx.productCardsQueued >= MAX_PRODUCT_CARDS_PER_TURN) {
+              skipped.push(slug);
+              continue;
+            }
             const product = getProductBySlug(slug);
             if (!product || !product.active) {
               skipped.push(slug);

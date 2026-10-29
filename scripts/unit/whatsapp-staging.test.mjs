@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { loadSource } from "../test-source.mjs";
-import { genericProduct, orderFixture } from "../order-operations-fixtures.mjs";
+import { genericProduct, orderFixture, upsellService } from "../order-operations-fixtures.mjs";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-staging-"));
 process.env.DELIVERY_PROVIDER = "mock";
@@ -25,6 +25,7 @@ const staging = loadSource("@/lib/services/whatsapp-staging");
 const { getOrderEditState, editOrder } = loadSource("@/lib/services/order-edits");
 const { getCrmOrder } = loadSource("@/lib/services/orders");
 const { openStock } = loadSource("@/lib/services/inventory");
+const { deriveOrderToken } = loadSource("@/lib/order-token");
 const db = getDb();
 const actor = { id: "agent-1", name: "Agent Test" };
 
@@ -307,4 +308,32 @@ test("requests upsert per conversation, then convert or dismiss", () => {
   });
   assert.notEqual(again.id, first.id);
   assert.equal(staging.getRequest(first.id).status, "converted");
+});
+
+test("approving an edit proposal keeps the accepted upsell line and its discounted price", () => {
+  orderFixture(db, "p-upsell", { variantId: "p-39", offerVariantId: "p-38" });
+  upsellService(db).resolveUpsell("p-upsell", "request-accept", deriveOrderToken("p-upsell", "nonce-p-upsell"),
+    { action: "accept", variantId: "p-38" });
+  const before = getOrderEditState("p-upsell").snapshot;
+  assert.equal(before.upsellItems.length, 1);
+  assert.equal(before.upsellItems[0].unit_price, 210);
+
+  const proposal = staging.createProposal({
+    orderId: "p-upsell",
+    conversationId: "conv1",
+    kind: "edit",
+    lines: [{ variantId: "p-39", qty: 2 }],
+    summary: "Le client veut 2 pièces de 500 ml.",
+  });
+  assert.equal(staging.approveProposal(proposal.id, actor).status, "approved");
+
+  const after = getOrderEditState("p-upsell").snapshot;
+  assert.equal(after.items.length, 1);
+  assert.equal(after.items[0].variant_id, "p-39");
+  assert.equal(after.items[0].quantity, 2);
+  assert.equal(after.upsellItems.length, 1);
+  assert.equal(after.upsellItems[0].variant_id, "p-38");
+  assert.equal(after.upsellItems[0].unit_price, 210);
+  assert.equal(after.subtotal, 300 * 2 + 210);
+  assert.equal(getCrmOrder("p-upsell").upsellStatus, "accepted");
 });

@@ -16,12 +16,15 @@ import { getStoreSettings } from "@/lib/services/store-settings";
 import {
   flagHandoff,
   getOrCreateConversation,
+  hasAiReplyForMessage,
   insertInboundMessage,
   linkOrdersFromMessage,
   logOrderContact,
   pauseAi,
+  pendingOutboundReplies,
   setMessageTranscript,
   setLanguage,
+  strikeRecordedForMessage,
   updateMessageMedia,
   type LinkResult,
   type WaConversation,
@@ -188,8 +191,10 @@ interface NewMessageRow {
 
 /**
  * Inbound messages written after the latest outbound AI/agent message (the
- * unreplied tail, at most the last 10), chronological. The current message is
- * always part of the result even if its WhatsApp timestamp predates the last
+ * unreplied tail, at most the last 10), chronological. Replies still queued in
+ * the outbox count as outbound: a second customer message during a pacing gap
+ * must not re-answer what is already answered. The current message is always
+ * part of the result even if its WhatsApp timestamp predates the last
  * outbound send (delayed delivery).
  */
 function collectAgentNewMessages(conversationId: string, currentMessageId: string): NewMessageRow[] {
@@ -201,13 +206,16 @@ function collectAgentNewMessages(conversationId: string, currentMessageId: strin
        ORDER BY created_at DESC, id DESC LIMIT 1`,
     )
     .get(conversationId) as { created_at: string } | undefined;
+  const queued = pendingOutboundReplies(conversationId);
+  const lastQueued = queued.length > 0 ? queued[queued.length - 1]!.created_at : "";
+  const cutoff = (lastOut?.created_at ?? "") > lastQueued ? (lastOut?.created_at ?? "") : lastQueued;
   const rows = db
     .prepare(
       `SELECT id, kind, body, transcript, media_path FROM wa_messages
        WHERE conversation_id = ? AND direction = 'in' AND created_at > ?
        ORDER BY created_at DESC, id DESC LIMIT ${AGENT_NEW_MESSAGES_MAX}`,
     )
-    .all(conversationId, lastOut?.created_at ?? "") as NewMessageRow[];
+    .all(conversationId, cutoff) as NewMessageRow[];
   rows.reverse();
   if (!rows.some((row) => row.id === currentMessageId)) {
     const current = db
@@ -313,11 +321,32 @@ async function processCustomerMessage(ev: ClaimedInbound): Promise<"done" | "ign
     })
     .immediate();
 
-  // Same WhatsApp message reaching us twice: everything below already ran.
-  if (duplicate) {
+  // First attempt on an already stored message: a genuine redelivery, everything
+  // below already ran. A later attempt is the retry of an unfinished event (the
+  // message row is written before media, transcription and reply), so it
+  // continues; every step below is idempotent or guarded against repeating.
+  const isRetry = duplicate && ev.attempts > 1;
+  if (duplicate && !isRetry) {
     markInboundDone(ev.id, ev.lease);
     return "done";
   }
+  const stored = duplicate
+    ? (getDb()
+        .prepare("SELECT media_path, media_mime, media_sha256, media_bytes, transcript FROM wa_messages WHERE id = ?")
+        .get(messageId) as
+        | {
+            media_path: string | null;
+            media_mime: string | null;
+            media_sha256: string | null;
+            media_bytes: number | null;
+            transcript: string | null;
+          }
+        | undefined)
+    : undefined;
+  const recordStrike = (reason: StrikeReason): StrikeDecision =>
+    isRetry && strikeRecordedForMessage(messageId, reason)
+      ? { action: "none", points: 0 }
+      : addStrike({ phone, reason, messageId, now });
 
   const ctx: CopyCtx = {
     locale: localeForLanguage(conv.language),
@@ -349,7 +378,7 @@ async function processCustomerMessage(ev: ClaimedInbound): Promise<"done" | "ign
     const alreadyPaused = Boolean(conv.aiPausedUntil && conv.aiPausedUntil > nowIso);
     if (!alreadyPaused) {
       pauseAi(conv.id, new Date(now.getTime() + SPAM_PAUSE_MS).toISOString());
-      const decision = addStrike({ phone, reason: "spam_burst", messageId, now });
+      const decision = recordStrike("spam_burst");
       const outcome = handleStrikeDecision({
         decision,
         reasonLabel: STRIKE_LABELS.spam_burst,
@@ -370,44 +399,54 @@ async function processCustomerMessage(ev: ClaimedInbound): Promise<"done" | "ign
 
   // Media: download and store voice notes and images. A retryable download
   // failure replays the whole event; an unusable media hands off to a human.
-  let transcript: string | null = null;
+  let transcript: string | null = stored?.transcript ?? null;
   if (parsed.type === "audio" || parsed.type === "image") {
     let media: StoredMedia;
-    try {
-      // Evolution's getBase64FromMediaMessage receives the webhook message key
-      // echoed back, so `remoteJid` must be the chat JID exactly as Evolution
-      // delivered it: `parsed.jid` (the raw `key.remoteJid`, which stays an
-      // `@lid` value for LID chats — those chats are stored under that JID;
-      // current Evolution resolves the message by `key.id` alone, making the
-      // JID moot there, but echoing the delivered JID is the documented
-      // contract). Re-verify `@lid` chats live during the Darija eval (task 26)
-      // before relying on voice notes from such conversations.
-      media = await fetchInboundMedia({
-        waMessageId: parsed.waMessageId,
-        remoteJid: parsed.jid,
-        expected: parsed.type,
+    if (stored?.media_path) {
+      media = {
+        relPath: stored.media_path,
+        mime: stored.media_mime ?? "application/octet-stream",
+        sha256: stored.media_sha256 ?? "",
+        bytes: stored.media_bytes ?? 0,
+        kind: parsed.type,
+      };
+    } else {
+      try {
+        // Evolution's getBase64FromMediaMessage receives the webhook message key
+        // echoed back, so `remoteJid` must be the chat JID exactly as Evolution
+        // delivered it: `parsed.jid` (the raw `key.remoteJid`, which stays an
+        // `@lid` value for LID chats — those chats are stored under that JID;
+        // current Evolution resolves the message by `key.id` alone, making the
+        // JID moot there, but echoing the delivered JID is the documented
+        // contract). Re-verify `@lid` chats live during the Darija eval (task 26)
+        // before relying on voice notes from such conversations.
+        media = await fetchInboundMedia({
+          waMessageId: parsed.waMessageId,
+          remoteJid: parsed.jid,
+          expected: parsed.type,
+        });
+      } catch (error) {
+        if (error instanceof MediaError && error.kind === "download") {
+          markInboundRetry(ev.id, ev.lease, error.message);
+          return "retry";
+        }
+        if (error instanceof MediaError) {
+          setMessageNote(messageId, error.kind === "too_large" ? "[média trop volumineux]" : "[média non pris en charge]");
+          flagHandoff(conv.id, HANDOFF_UNSUPPORTED_MEDIA);
+          markInboundDone(ev.id, ev.lease);
+          return "done";
+        }
+        throw error;
+      }
+      updateMessageMedia(messageId, {
+        mediaPath: media.relPath,
+        mediaMime: media.mime,
+        mediaSha256: media.sha256,
+        mediaBytes: media.bytes,
       });
-    } catch (error) {
-      if (error instanceof MediaError && error.kind === "download") {
-        markInboundRetry(ev.id, ev.lease, error.message);
-        return "retry";
-      }
-      if (error instanceof MediaError) {
-        setMessageNote(messageId, error.kind === "too_large" ? "[média trop volumineux]" : "[média non pris en charge]");
-        flagHandoff(conv.id, HANDOFF_UNSUPPORTED_MEDIA);
-        markInboundDone(ev.id, ev.lease);
-        return "done";
-      }
-      throw error;
     }
-    updateMessageMedia(messageId, {
-      mediaPath: media.relPath,
-      mediaMime: media.mime,
-      mediaSha256: media.sha256,
-      mediaBytes: media.bytes,
-    });
 
-    if (parsed.type === "audio" && aiBudgetAvailable(now)) {
+    if (parsed.type === "audio" && transcript === null && aiBudgetAvailable(now)) {
       try {
         const result = await transcribeAudio({
           bytes: await readMedia(media.relPath),
@@ -449,7 +488,7 @@ async function processCustomerMessage(ev: ClaimedInbound): Promise<"done" | "ign
   if (text && !isOther) {
     linkResult = linkOrdersFromMessage(conv.id, text, now);
     if (linkResult.newlyLocked) {
-      const decision = addStrike({ phone, reason: "ref_guessing", messageId, now });
+      const decision = recordStrike("ref_guessing");
       const outcome = handleStrikeDecision({
         decision,
         reasonLabel: STRIKE_LABELS.ref_guessing,
@@ -505,7 +544,7 @@ async function processCustomerMessage(ev: ClaimedInbound): Promise<"done" | "ign
             : null;
 
     if (strikeReason) {
-      const decision = addStrike({ phone, reason: strikeReason, messageId, now });
+      const decision = recordStrike(strikeReason);
       const outcome = handleStrikeDecision({
         decision,
         reasonLabel: STRIKE_LABELS[strikeReason],
@@ -531,15 +570,25 @@ async function processCustomerMessage(ev: ClaimedInbound): Promise<"done" | "ign
       | { received_at: string }
       | undefined
   )?.received_at ?? nowIso;
-  const hasLaterEvent = getDb()
+  // Only events that parse to an answerable message count: reactions, protocol
+  // messages and the store's own sent messages never get a reply of their own.
+  const laterEvents = getDb()
     .prepare(
-      `SELECT 1 FROM wa_inbound_events
+      `SELECT payload_json FROM wa_inbound_events
        WHERE status IN ('pending','processing')
+         AND event_type = 'messages.upsert'
          AND (received_at > ? OR (received_at = ? AND id > ?))
          AND json_extract(payload_json, '$.key.remoteJid') = ?
-       LIMIT 1`,
+       LIMIT 200`,
     )
-    .get(receivedAt, receivedAt, ev.id, parsed.jid);
+    .all(receivedAt, receivedAt, ev.id, parsed.jid) as Array<{ payload_json: string }>;
+  const hasLaterEvent = laterEvents.some((row) => {
+    try {
+      return parseEvolutionMessage(JSON.parse(row.payload_json)).type !== "skip";
+    } catch {
+      return false;
+    }
+  });
   if (hasLaterEvent) {
     markInboundDone(ev.id, ev.lease);
     return "done";
@@ -566,6 +615,12 @@ async function processCustomerMessage(ev: ClaimedInbound): Promise<"done" | "ign
     if (classification?.wantsHuman) {
       flagHandoff(conv.id, HANDOFF_HUMAN_REQUEST);
       enqueueHandoffMessage(conv, ctx, day);
+      markInboundDone(ev.id, ev.lease);
+      return "done";
+    }
+
+    // A retried event whose reply is already queued must not answer twice.
+    if (isRetry && hasAiReplyForMessage(messageId)) {
       markInboundDone(ev.id, ev.lease);
       return "done";
     }

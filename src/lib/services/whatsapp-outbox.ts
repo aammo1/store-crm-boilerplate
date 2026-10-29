@@ -3,9 +3,12 @@ import { getDb } from "@/lib/db";
 import { normalizeMaPhone } from "@/lib/phone";
 import { getAppState, setAppState } from "@/lib/services/app-state";
 import { getWhatsAppSettings } from "@/lib/services/whatsapp-settings";
+import { redactSecrets, redactText } from "@/lib/shipping/redact";
+import { evolutionConfig, whatsappConfigured } from "@/lib/whatsapp/config";
 import {
   casablancaDateTimeToDate,
   casablancaParts,
+  effectiveWindow,
   inWindow,
   nextWindowOpen,
   randomGapMs,
@@ -25,6 +28,39 @@ export type OutboxPurpose =
   | "agent_reply"
   | "strike_warning"
   | "product_card";
+
+const MAX_BODY_CHARS = 4096;
+const MAX_ERROR_CHARS = 500;
+const HOUR_MS = 3600_000;
+
+/** Queued rows older than this (since creation or manual requeue) are cancelled, never sent late. */
+const MAX_QUEUED_AGE_MS: Record<OutboxPurpose, number> = {
+  notify_confirmed: 48 * HOUR_MS,
+  notify_shipped: 48 * HOUR_MS,
+  notify_delivered: 48 * HOUR_MS,
+  notify_out_for_delivery: 48 * HOUR_MS,
+  notify_delivery_issue: 48 * HOUR_MS,
+  notify_cancelled: 48 * HOUR_MS,
+  relance_no_answer: 48 * HOUR_MS,
+  admin_alert: 24 * HOUR_MS,
+  agent_reply: 24 * HOUR_MS,
+  strike_warning: 6 * HOUR_MS,
+  ai_reply: HOUR_MS,
+  product_card: HOUR_MS,
+};
+const EXPIRED_NOTE = "Message expiré (trop ancien pour être envoyé).";
+
+/** Strips secrets and phone numbers from vendor error text and bounds its length. */
+export function sanitizeOutboxError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  const secrets = [evolutionConfig()?.apiKey ?? ""];
+  const text = redactSecrets(redactText(raw), secrets)
+    .replace(/\b\d{8,}@[a-z.]+/gi, "[jid]")
+    .replace(/\+?\d[\d .-]{7,}\d/g, (match) => (match.replace(/\D/g, "").length >= 9 ? "[numéro]" : match))
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > MAX_ERROR_CHARS ? `${text.slice(0, MAX_ERROR_CHARS - 1)}…` : text;
+}
 
 export interface EnqueueInput {
   dedupeKey: string;
@@ -84,7 +120,8 @@ interface OutboxRow {
  * Enqueues a row in wa_outbox. Must be called INSIDE the caller's db.transaction
  * so the message is only queued when the business change commits (Meta outbox pattern).
  * Skips and returns false when:
- * - settings.enabled is false
+ * - settings.enabled is false or WhatsApp env is not configured (inert, no backlog)
+ * - body is empty or longer than 4096 characters
  * - purpose is notify_* or relance_no_answer and notificationsEnabled is false
  * - phone in blocked_phones, unless purpose is admin_alert
  * - matching wa_conversations.no_whatsapp = 1
@@ -94,7 +131,11 @@ export function enqueueOutbox(input: EnqueueInput): boolean {
   const db = getDb();
   const settings = getWhatsAppSettings();
 
-  if (!settings.enabled) return false;
+  if (!settings.enabled || !whatsappConfigured()) return false;
+
+  const bodyLength = (input.body ?? "").trim().length;
+  if (input.kind !== "image" && bodyLength === 0) return false;
+  if ((input.body ?? "").length > MAX_BODY_CHARS) return false;
 
   if (
     (input.purpose.startsWith("notify_") || input.purpose === "relance_no_answer") &&
@@ -200,6 +241,18 @@ export function enqueueOutbox(input: EnqueueInput): boolean {
   return result.changes > 0;
 }
 
+function expireStaleQueued(db: ReturnType<typeof getDb>, now: Date): void {
+  const nowIso = now.toISOString();
+  const stmt = db.prepare(`
+    UPDATE wa_outbox
+    SET status = 'cancelled', last_error = ?, updated_at = ?
+    WHERE status = 'queued' AND purpose = ? AND COALESCE(resolved_at, created_at) < ?
+  `);
+  for (const [purpose, maxAgeMs] of Object.entries(MAX_QUEUED_AGE_MS)) {
+    stmt.run(EXPIRED_NOTE, nowIso, purpose, new Date(now.getTime() - maxAgeMs).toISOString());
+  }
+}
+
 /**
  * Atomically claims at most one due row, honoring pacing:
  * - settings.enabled
@@ -217,6 +270,8 @@ export function claimNextOutbox(now: Date = new Date()): ClaimedOutbox | null {
       if (!settings.enabled) return null;
 
       const nowIso = now.toISOString();
+
+      expireStaleQueued(db, now);
 
       const nextSendAt = getAppState("wa_next_send_at");
       if (nextSendAt && now.getTime() < new Date(nextSendAt).getTime()) {
@@ -236,6 +291,7 @@ export function claimNextOutbox(now: Date = new Date()): ClaimedOutbox | null {
         return null;
       }
 
+      const window = effectiveWindow(settings.sendWindowStart, settings.sendWindowEnd);
       const { date: todayDate } = casablancaParts(now);
       const startOfDay = casablancaDateTimeToDate(todayDate, "00:00").toISOString();
       const endOfDay = tomorrowWindowOpen(now, "00:00").toISOString();
@@ -250,22 +306,22 @@ export function claimNextOutbox(now: Date = new Date()): ClaimedOutbox | null {
 
       for (const candidate of candidates) {
         if (candidate.respect_window === 1) {
-          if (!inWindow(now, settings.sendWindowStart, settings.sendWindowEnd)) {
-            const nextOpen = nextWindowOpen(now, settings.sendWindowStart);
+          if (!inWindow(now, window.start, window.end)) {
+            const nextOpen = nextWindowOpen(now, window.start);
             db.prepare(
               "UPDATE wa_outbox SET available_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'",
             ).run(nextOpen.toISOString(), nowIso, candidate.id);
             continue;
           }
           if (candidate.counts_toward_cap === 1 && sentToday >= settings.dailyOutboundCap) {
-            const tomorrowOpen = tomorrowWindowOpen(now, settings.sendWindowStart);
+            const tomorrowOpen = tomorrowWindowOpen(now, window.start);
             db.prepare(
               "UPDATE wa_outbox SET available_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'",
             ).run(tomorrowOpen.toISOString(), nowIso, candidate.id);
             continue;
           }
         } else if (candidate.counts_toward_cap === 1 && sentToday >= settings.dailyOutboundCap) {
-          const tomorrowOpen = tomorrowWindowOpen(now, settings.sendWindowStart);
+          const tomorrowOpen = tomorrowWindowOpen(now, window.start);
           db.prepare(
             "UPDATE wa_outbox SET available_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'",
           ).run(tomorrowOpen.toISOString(), nowIso, candidate.id);
@@ -422,6 +478,7 @@ export function markOutboxSent(id: string, lease: string, waMessageId: string | 
  */
 export function markOutboxRetry(id: string, lease: string, error: string): void {
   const db = getDb();
+  error = sanitizeOutboxError(error);
   db.transaction(() => {
     const row = db
       .prepare("SELECT attempts FROM wa_outbox WHERE id = ? AND lease = ?")
@@ -458,6 +515,7 @@ export function markOutboxRetry(id: string, lease: string, error: string): void 
  * Marks outbox row as permanently failed.
  */
 export function markOutboxFailed(id: string, lease: string, error: string): void {
+  error = sanitizeOutboxError(error);
   const nowIso = new Date().toISOString();
   getDb()
     .prepare(`
@@ -475,6 +533,7 @@ export function markOutboxFailed(id: string, lease: string, error: string): void
  * Marks outbox row as uncertain (never auto-retried).
  */
 export function markOutboxUncertain(id: string, lease: string, error: string): void {
+  error = sanitizeOutboxError(error);
   const nowIso = new Date().toISOString();
   getDb()
     .prepare(`

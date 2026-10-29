@@ -10,6 +10,7 @@ import {
   type WhatsAppConnectionStateValue,
   type WhatsAppSettings,
 } from "@/lib/whatsapp-settings-schema";
+import { whatsappConfigured } from "@/lib/whatsapp/config";
 
 export const WHATSAPP_SETTINGS_KEY = "whatsapp_settings";
 export const WHATSAPP_CONNECTION_KEY = "whatsapp_connection";
@@ -108,6 +109,15 @@ export function getWhatsAppSettings(): WhatsAppSettings {
     recovered.maxGapSeconds = DEFAULT_WHATSAPP_SETTINGS.maxGapSeconds;
   }
 
+  if (
+    typeof recovered.sendWindowStart === "string" &&
+    typeof recovered.sendWindowEnd === "string" &&
+    recovered.sendWindowStart >= recovered.sendWindowEnd
+  ) {
+    recovered.sendWindowStart = DEFAULT_WHATSAPP_SETTINGS.sendWindowStart;
+    recovered.sendWindowEnd = DEFAULT_WHATSAPP_SETTINGS.sendWindowEnd;
+  }
+
   const finalParsed = whatsappSettingsSchema.safeParse(recovered);
   if (finalParsed.success) {
     return finalParsed.data;
@@ -127,6 +137,13 @@ export function updateWhatsAppSettings(input: unknown): WhatsAppSettings {
     .transaction(() => {
       const current = getWhatsAppSettings();
       const merged = whatsappSettingsSchema.parse({ ...current, ...update });
+      if (merged.enabled && !current.enabled && !whatsappConfigured()) {
+        throw new WhatsAppSettingsError(
+          "WhatsApp n’est pas configuré sur le serveur (variables EVOLUTION_* et WHATSAPP_WEBHOOK_SECRET).",
+          409,
+          "enabled",
+        );
+      }
       setAppState(WHATSAPP_SETTINGS_KEY, JSON.stringify(merged));
       return merged;
     })

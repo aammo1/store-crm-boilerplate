@@ -248,6 +248,9 @@ export function WhatsAppSettingsForm({
     if (!timeRegex.test(sendWindowEnd)) {
       errors.sendWindowEnd = "Format attendu : HH:MM.";
     }
+    if (!errors.sendWindowStart && !errors.sendWindowEnd && sendWindowStart >= sendWindowEnd) {
+      errors.sendWindowEnd = "L’heure de fin doit être postérieure à l’heure de début.";
+    }
 
     const capValue = Number.parseInt(dailyOutboundCap, 10);
     if (!Number.isInteger(capValue) || capValue < 1 || capValue > 1000) {
@@ -329,7 +332,8 @@ export function WhatsAppSettingsForm({
       dailyOutboundCap: capValue,
       minGapSeconds: minGapValue,
       maxGapSeconds: maxGapValue,
-      aiEnabled: configured.ai && aiEnabled,
+      // Not configured: the checkbox is locked, so never send a change for it.
+      aiEnabled: configured.ai ? aiEnabled : initialSettings.aiEnabled,
       assistantName,
       faqText,
       aiDailyBudgetCents,
@@ -519,7 +523,7 @@ export function WhatsAppSettingsForm({
                 role="switch"
                 aria-checked={enabled}
                 onClick={handleToggleEnabled}
-                disabled={pending}
+                disabled={pending || (!enabled && !configured.evolution)}
                 className={cn(
                   "relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
                   enabled ? "bg-primary" : "bg-muted-foreground/30",

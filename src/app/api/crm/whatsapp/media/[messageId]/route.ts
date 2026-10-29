@@ -1,31 +1,11 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
 import { AuthGuardError, requireUser } from "@/lib/auth-guards";
 import { getDb } from "@/lib/db";
 import { canAccessConversation } from "@/lib/services/whatsapp-conversations";
-import { getUploadDir } from "@/lib/uploads";
+import { absoluteMediaPath } from "@/lib/whatsapp/media";
 
 export const runtime = "nodejs";
-
-/**
- * Resolves a stored media relative path under the uploads root.
- * Inline fallback (task-16 will provide src/lib/whatsapp/media.ts): rejects
- * traversal ("..") and absolute components, then verifies the resolved path
- * stays under the root.
- */
-function absoluteMediaPath(relPath: string): string | null {
-  if (!relPath || relPath.includes("\0")) return null;
-  const normalized = relPath.replaceAll("\\", "/");
-  if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) return null;
-  if (normalized.split("/").includes("..")) return null;
-  const root = path.resolve(getUploadDir());
-  const resolved = path.resolve(root, normalized);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-    return null;
-  }
-  return resolved;
-}
 
 export async function GET(
   _request: Request,
@@ -60,8 +40,11 @@ export async function GET(
       return NextResponse.json({ error: "Média expiré (rétention)" }, { status: 410 });
     }
 
-    const filePath = absoluteMediaPath(message.media_path);
-    if (!filePath) {
+    // Product-card rows keep an image URL in media_path: never a local file.
+    let filePath: string;
+    try {
+      filePath = absoluteMediaPath(message.media_path);
+    } catch {
       return NextResponse.json({ error: "Média introuvable." }, { status: 404 });
     }
 

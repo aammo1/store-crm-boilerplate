@@ -87,11 +87,14 @@ function isTypingPurpose(purpose: OutboxPurpose): boolean {
 export async function waTick(now: Date = new Date()): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;
+  // AI calls can take long: every claim reads the clock again (injected `now` plus real elapsed time).
+  const tickStartedAt = Date.now();
+  const clock = (): Date => new Date(now.getTime() + (Date.now() - tickStartedAt));
   try {
     // 1. Inbound: process up to MAX_INBOUND_PER_TICK events
     // Inbound is processed even when settings.enabled is false, so the inbox keeps recording.
     for (let i = 0; i < MAX_INBOUND_PER_TICK; i++) {
-      const ev = claimNextInboundEvent(now);
+      const ev = claimNextInboundEvent(clock());
       if (!ev) break;
       await processInboundEvent(ev);
     }
@@ -101,7 +104,7 @@ export async function waTick(now: Date = new Date()): Promise<void> {
     if (settings.enabled) {
       const sender = getWhatsAppSender();
       if (sender) {
-        const row = claimNextOutbox(now);
+        const row = claimNextOutbox(clock());
         if (row) {
           const number = row.phone.replace("+", "");
           let sendStarted = false;

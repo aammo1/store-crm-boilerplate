@@ -11,6 +11,10 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "whatsapp-notify-"));
 process.env.DELIVERY_PROVIDER = "mock";
 process.env.DB_PATH = path.join(dir, "crm.db");
 process.env.AUTH_SECRET = "x".repeat(40);
+process.env.EVOLUTION_BASE_URL = "http://evolution.internal:8080";
+process.env.EVOLUTION_INSTANCE = "test-instance";
+process.env.EVOLUTION_API_KEY = "evolution-ephemeral-key";
+process.env.WHATSAPP_WEBHOOK_SECRET = "w".repeat(40);
 process.env.CRM_PUBLIC_URL = "https://crm.example.test";
 process.env.SECURITY_ALLOWED_ORIGINS = "https://crm.example.test";
 
@@ -320,10 +324,31 @@ test("enabled: an automatic block after a refusal sends one deduplicated admin a
 
   const blocked = db.prepare("SELECT * FROM blocked_phones WHERE phone = ?").get(phone);
   assert.ok(blocked, "phone auto-blocked");
-  const alert = rowByKey(`admin:autoblock:${phone}:${new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca" }).format(new Date())}`);
+  const alert = rowByKey(`admin:autoblock:${phone}:${new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Casablanca" }).format(new Date())}:+212700000001`);
   assert.ok(alert, "auto-block admin alert");
   assert.ok(alert.body.includes("bloqué"));
   assert.equal(countByKey(alert.dedupe_key), 1);
+});
+
+test("enabled: an automatic block alerts every admin phone once", async () => {
+  setSettings({
+    enabled: true,
+    notificationsEnabled: true,
+    adminPhones: ["+212700000001", "+212700000002"],
+    autoBlockEnabled: true,
+  });
+  const phone = "+212600000115";
+  const id = makeOrder("ord-autoblock-2", phone);
+  confirmOrder(id, CONFIRM_INPUT, ACTOR);
+  await drainSubmissions(createMockProvider());
+  db.prepare("INSERT INTO wa_strikes (id, phone, points, reason_code, created_at, expires_at) VALUES (?, ?, 1, 'spam_burst', ?, ?)")
+    .run("seed-strike-2", phone, new Date().toISOString(), new Date(Date.now() + 90 * 86400_000).toISOString());
+
+  setDeliveryOutcome(id, "refused", ADMIN_ACTOR, "agent");
+
+  const rows = db.prepare("SELECT phone, dedupe_key FROM wa_outbox WHERE dedupe_key LIKE ?").all(`admin:autoblock:${phone}:%`);
+  assert.deepEqual(rows.map((r) => r.phone).sort(), ["+212700000001", "+212700000002"]);
+  assert.equal(new Set(rows.map((r) => r.dedupe_key)).size, 2);
 });
 
 test("an outbox failure never breaks the confirmation", () => {

@@ -507,7 +507,16 @@ export function approveProposal(
           // since, editOrder rejects it and the proposal fails instead of clobbering
           // the concurrent change.
           revision: typeof payload.revision === "string" ? payload.revision : state.revision,
-          lines: payload.lines.map((l) => ({ variantId: l.variantId, qty: l.qty })),
+          // The proposal only covers regular lines: accepted upsell lines are carried over
+          // with their index so editOrder keeps their stored discounted price.
+          lines: [
+            ...payload.lines.map((l) => ({ variantId: l.variantId, qty: l.qty })),
+            ...state.snapshot.upsellItems.map((item, upsellIndex) => ({
+              variantId: item.variant_id,
+              qty: item.quantity,
+              upsellIndex,
+            })),
+          ],
           discountMode: isPack ? "pack" : (state.snapshot.discountMode ?? "manual"),
           discountType: isPack ? "none" : state.snapshot.discountType,
           discountValue: isPack ? 0 : state.snapshot.discountValue,

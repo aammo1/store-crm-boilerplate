@@ -42,6 +42,7 @@ export async function GET(
     const messages = listMessages(id, {
       before: parsed.data.before,
       limit: parsed.data.limit,
+      includeUnsent: true,
     });
 
     return NextResponse.json(

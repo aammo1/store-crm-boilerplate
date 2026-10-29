@@ -7,6 +7,7 @@ import {
   getConversation,
   linkOrderByAgent,
 } from "@/lib/services/whatsapp-conversations";
+import { orderRefSqlMatch } from "@/lib/whatsapp/phone";
 import { z } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -17,18 +18,13 @@ const linkBody = z
     orderRef: z
       .string()
       .trim()
-      .regex(/^[A-Za-z0-9]{8}$/, "Référence commande invalide (8 caractères).")
+      .regex(/^[A-Za-z0-9_-]{8}$/, "Référence commande invalide (8 caractères).")
       .optional(),
     orderId: z.string().trim().min(1, "Commande requise.").max(64).optional(),
   })
   .refine((body) => Boolean(body.orderId ?? body.orderRef), {
     message: "Référence commande ou identifiant requis.",
   });
-
-/** LIKE wildcards in the ref must match literally, not as patterns. */
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, "\\$&");
-}
 
 export async function POST(
   request: Request,
@@ -70,8 +66,8 @@ export async function POST(
     if (!orderId) {
       const ref = parsed.data.orderRef!.toUpperCase();
       const matches = db
-        .prepare("SELECT id FROM orders WHERE upper(id) LIKE ? ESCAPE '\\'")
-        .all(`${escapeLike(ref)}%`) as Array<{ id: string }>;
+        .prepare(`SELECT id FROM orders WHERE ${orderRefSqlMatch()}`)
+        .all(ref, ref) as Array<{ id: string }>;
       if (matches.length === 0) {
         return NextResponse.json({ error: "Commande introuvable." }, { status: 404 });
       }

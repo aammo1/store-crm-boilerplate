@@ -12,11 +12,19 @@ process.env.DELIVERY_PROVIDER = "mock";
 process.env.DB_PATH = path.join(dir, "crm.db");
 process.env.UPLOAD_DIR = path.join(dir, "uploads");
 process.env.AUTH_SECRET = "x".repeat(40);
+process.env.EVOLUTION_BASE_URL = "http://evolution.internal:8080";
+process.env.EVOLUTION_INSTANCE = "test-instance";
+process.env.EVOLUTION_API_KEY = "evolution-ephemeral-key";
+process.env.WHATSAPP_WEBHOOK_SECRET = "w".repeat(40);
 process.env.CRM_PUBLIC_URL = "https://crm.example.test";
 process.env.SECURITY_ALLOWED_ORIGINS = "https://crm.example.test";
 
+let storefrontRevalidations = 0;
 const originalLoad = Module._load;
 Module._load = function (name, ...args) {
+  if (name === "next/cache") {
+    return { revalidateTag() {}, revalidatePath() { storefrontRevalidations += 1; } };
+  }
   return name === "server-only" ? {} : originalLoad.call(this, name, ...args);
 };
 
@@ -505,14 +513,17 @@ test("proposals: approve and reject map staging errors", async () => {
   });
 
   mockUser = AGENT_A;
+  const revalidationsBefore = storefrontRevalidations;
   const approved = await routes.proposal.POST(crmPost({ action: "approve" }), { params: Promise.resolve({ id: proposal.id }) });
   assert.equal(approved.status, 200);
+  assert.equal(storefrontRevalidations, revalidationsBefore + 1, "approval revalidates the storefront");
   const approvedBody = await approved.json();
   assert.equal(approvedBody.proposal.status, "approved");
   assert.equal(db.prepare("SELECT confirmation_status FROM orders WHERE id = ?").get(O3).confirmation_status, "cancelled");
 
   // Already decided -> 409 from StagingError
   assert.equal((await routes.proposal.POST(crmPost({ action: "approve" }), { params: Promise.resolve({ id: proposal.id }) })).status, 409);
+  assert.equal(storefrontRevalidations, revalidationsBefore + 1, "a refused approval does not revalidate");
   assert.equal((await routes.proposal.POST(crmPost({ action: "reject", note: "trop tard" }), { params: Promise.resolve({ id: proposal.id }) })).status, 409);
   assert.equal((await routes.proposal.POST(crmPost({ action: "approve" }), { params: Promise.resolve({ id: "prop_unknown" }) })).status, 404);
 

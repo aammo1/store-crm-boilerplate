@@ -421,3 +421,45 @@ test("thrown errors never contain the apiKey, the recipient number or the sent t
     });
   });
 });
+
+/** A 2xx Response whose body stream dies after the first chunk. */
+function brokenBodyResponse() {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"key":{"id":'));
+    },
+    pull(controller) {
+      controller.error(new Error("terminated: socket hang up 212600000001"));
+    },
+  });
+  return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+}
+
+test("a 2xx send whose body dies mid-stream is classified unknown (uncertain), not a raw error", async () => {
+  await withFetch(
+    () => brokenBodyResponse(),
+    async () => {
+      await assert.rejects(
+        () => sender().sendText("212600000001", "Bonjour"),
+        (err) => {
+          assertSecretFree(err);
+          assert.equal(err.kind, "unknown");
+          assert.equal(err.message, "response_read_failed");
+          return true;
+        },
+      );
+    },
+  );
+});
+
+test("a non-send call whose 2xx body dies mid-stream is retryable", async () => {
+  await withFetch(
+    () => brokenBodyResponse(),
+    async () => {
+      await assert.rejects(
+        () => sender().connectionState(),
+        (err) => err instanceof evolution.WhatsAppError && err.kind === "retryable",
+      );
+    },
+  );
+});
