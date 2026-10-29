@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export interface CrmNavLink {
@@ -13,6 +14,7 @@ export interface CrmNavLink {
 export const CRM_NAV_LINKS: CrmNavLink[] = [
   { href: "/crm", label: "Tableau de bord" },
   { href: "/crm/orders", label: "Commandes" },
+  { href: "/crm/whatsapp", label: "WhatsApp" },
   { href: "/crm/expeditions", label: "Expéditions" },
   { href: "/crm/retours", label: "Retours" },
   { href: "/crm/paniers", label: "Paniers abandonnés" },
@@ -38,6 +40,44 @@ export function getCrmCurrentSectionTitle(pathname: string): string {
   return "Tableau de bord";
 }
 
+/**
+ * "À traiter" counter for the WhatsApp nav badge, refreshed on mount and every
+ * 60 s while the tab is visible. The summary route scopes `todo` per role
+ * server-side, so agents get their own count. Fetched only on CRM pages.
+ */
+function useWhatsAppTodoBadge(pathname: string): number | null {
+  const [todo, setTodo] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!pathname.startsWith("/crm")) return undefined;
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const response = await fetch("/api/crm/whatsapp/summary", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = (await response.json()) as { todo?: unknown };
+        if (!cancelled && typeof data.todo === "number") {
+          setTodo(data.todo);
+        }
+      } catch {
+        // réseau indisponible : le prochain cycle réessaie
+      }
+    }
+
+    void load();
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [pathname]);
+
+  return todo;
+}
+
 export interface CrmNavProps {
   isAdmin?: boolean;
   onNavigate?: () => void;
@@ -46,6 +86,7 @@ export interface CrmNavProps {
 
 export function CrmNav({ isAdmin = false, onNavigate, className }: CrmNavProps) {
   const pathname = usePathname();
+  const todoBadge = useWhatsAppTodoBadge(pathname);
 
   function isActive(href: string) {
     if (href === "/crm") return pathname === "/crm";
@@ -58,6 +99,7 @@ export function CrmNav({ isAdmin = false, onNavigate, className }: CrmNavProps) 
     <nav aria-label="Navigation CRM" className={cn("flex flex-col gap-1", className)}>
       {links.map((link) => {
         const active = isActive(link.href);
+        const showBadge = link.href === "/crm/whatsapp" && todoBadge !== null && todoBadge > 0;
         return (
           <Link
             key={link.href}
@@ -73,6 +115,16 @@ export function CrmNav({ isAdmin = false, onNavigate, className }: CrmNavProps) 
             )}
           >
             {link.label}
+            {showBadge && (
+              <span
+                className={cn(
+                  "ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold tabular-nums",
+                  active ? "bg-background text-foreground" : "bg-primary text-primary-foreground",
+                )}
+              >
+                {todoBadge > 99 ? "99+" : todoBadge}
+              </span>
+            )}
           </Link>
         );
       })}

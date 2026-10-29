@@ -452,6 +452,52 @@ test("outbox: admin listing and uncertain resolution", async () => {
   assert.equal((await routes.resolve.POST(crmPost({ resolution: "cancel" }), { params: Promise.resolve({ id: "outbox-fail-1" }) })).status, 409);
 });
 
+test("conversation detail: outbound messages expose the outbox status", async () => {
+  const t = new Date().toISOString();
+  // One outbox row per status, each linked to an outbound wa_messages row.
+  const statusRows = [
+    ["outbox-st-queued", "queued"],
+    ["outbox-st-sending", "sending"],
+    ["outbox-st-uncertain", "uncertain"],
+    ["outbox-st-failed", "failed"],
+    ["outbox-st-sent", "sent"],
+    ["outbox-st-cancelled", "cancelled"],
+  ];
+  for (const [outboxId, status] of statusRows) {
+    db.prepare(
+      "INSERT INTO wa_outbox (id, dedupe_key, conversation_id, phone, purpose, kind, body, status, attempts, available_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'agent_reply', 'text', 'réponse test', ?, 1, ?, ?, ?)",
+    ).run(outboxId, `dk-${outboxId}`, conv3.id, P3, status, t, t, t);
+    db.prepare(
+      "INSERT INTO wa_messages (id, conversation_id, direction, author, kind, body, outbox_id, created_at) VALUES (?, ?, 'out', 'agent', 'text', 'réponse test', ?, ?)",
+    ).run(`msg-${outboxId}`, conv3.id, outboxId, t);
+  }
+  // Outbound row whose outbox row is gone (purged): status null.
+  db.prepare(
+    "INSERT INTO wa_messages (id, conversation_id, direction, author, kind, body, created_at) VALUES (?, ?, 'out', 'agent', 'text', 'ancienne réponse', ?)",
+  ).run("msg-out-legacy", conv3.id, t);
+  // Inbound messages carry no outbox status at all.
+  db.prepare(
+    "INSERT INTO wa_messages (id, conversation_id, direction, author, kind, body, created_at) VALUES (?, ?, 'in', 'customer', 'text', 'une question', ?)",
+  ).run("msg-in-plain", conv3.id, t);
+
+  mockUser = AGENT_A; // conv3 is only linked to the unassigned order O3
+  const res = await routes.conversation.GET(crmGet(`/api/crm/whatsapp/conversations/${conv3.id}`), { params: Promise.resolve({ id: conv3.id }) });
+  assert.equal(res.status, 200);
+  const byId = new Map((await res.json()).messages.map((m) => [m.id, m]));
+  for (const [outboxId, status] of statusRows) {
+    assert.equal(byId.get(`msg-${outboxId}`).status, status);
+  }
+  assert.equal(byId.get("msg-out-legacy").status, null);
+  assert.equal(byId.get("msg-in-plain").status, undefined);
+
+  // Restore global state: the fixture rows would inflate the `uncertain`
+  // count asserted by the summary test below.
+  db.prepare(
+    "DELETE FROM wa_messages WHERE id LIKE 'msg-outbox-st-%' OR id IN ('msg-out-legacy', 'msg-in-plain')",
+  ).run();
+  db.prepare("DELETE FROM wa_outbox WHERE id LIKE 'outbox-st-%'").run();
+});
+
 test("proposals: approve and reject map staging errors", async () => {
   const proposal = staging.createProposal({
     orderId: O3, conversationId: conv3.id, kind: "cancel",

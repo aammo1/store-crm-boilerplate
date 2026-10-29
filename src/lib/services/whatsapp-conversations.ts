@@ -31,6 +31,9 @@ export interface WaConversation {
   updatedAt: string;
 }
 
+/** Delivery states of a wa_outbox row, surfaced on outbound message views. */
+export type WaOutboxStatus = "queued" | "sending" | "sent" | "uncertain" | "failed" | "cancelled";
+
 export interface WaMessageView {
   id: string;
   conversationId: string;
@@ -47,6 +50,8 @@ export interface WaMessageView {
   mediaBytes: number | null;
   mediaDeletedAt: string | null;
   outboxId: string | null;
+  /** Outbox status for outbound messages; null when the outbox row was purged. */
+  status?: WaOutboxStatus | null;
   createdAt: string;
 }
 
@@ -114,6 +119,7 @@ interface MessageRow {
   media_bytes: number | null;
   media_deleted_at: string | null;
   outbox_id: string | null;
+  outbox_status?: string | null;
   created_at: string;
 }
 
@@ -424,28 +430,34 @@ export function listMessages(
 
     if (beforeMsg) {
       query = `
-        SELECT * FROM wa_messages
-        WHERE conversation_id = ?
-          AND (created_at < ? OR (created_at = ? AND id < ?))
-        ORDER BY created_at DESC, id DESC
+        SELECT m.*, o.status AS outbox_status
+        FROM wa_messages m
+        LEFT JOIN wa_outbox o ON o.id = m.outbox_id
+        WHERE m.conversation_id = ?
+          AND (m.created_at < ? OR (m.created_at = ? AND m.id < ?))
+        ORDER BY m.created_at DESC, m.id DESC
         LIMIT ?
       `;
       params.push(beforeMsg.created_at, beforeMsg.created_at, beforeMsg.id, limit);
     } else {
       query = `
-        SELECT * FROM wa_messages
-        WHERE conversation_id = ?
-          AND created_at < ?
-        ORDER BY created_at DESC, id DESC
+        SELECT m.*, o.status AS outbox_status
+        FROM wa_messages m
+        LEFT JOIN wa_outbox o ON o.id = m.outbox_id
+        WHERE m.conversation_id = ?
+          AND m.created_at < ?
+        ORDER BY m.created_at DESC, m.id DESC
         LIMIT ?
       `;
       params.push(opts.before, limit);
     }
   } else {
     query = `
-      SELECT * FROM wa_messages
-      WHERE conversation_id = ?
-      ORDER BY created_at DESC, id DESC
+      SELECT m.*, o.status AS outbox_status
+      FROM wa_messages m
+      LEFT JOIN wa_outbox o ON o.id = m.outbox_id
+      WHERE m.conversation_id = ?
+      ORDER BY m.created_at DESC, m.id DESC
       LIMIT ?
     `;
     params.push(limit);
@@ -470,6 +482,12 @@ export function listMessages(
     mediaBytes: r.media_bytes ?? null,
     mediaDeletedAt: r.media_deleted_at ?? null,
     outboxId: r.outbox_id ?? null,
+    // Outbound bubbles expose the outbox delivery state (a recorded outbound
+    // message whose outbox row was purged still reports null — it was sent).
+    status:
+      r.direction === "out"
+        ? ((r.outbox_status as WaOutboxStatus | null) ?? null)
+        : undefined,
     createdAt: r.created_at,
   }));
 }

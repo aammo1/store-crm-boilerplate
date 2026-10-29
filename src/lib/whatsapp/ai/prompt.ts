@@ -13,6 +13,8 @@ export interface SystemPromptContext {
   nowCasablanca: string;
   orders: Array<{ ref: string; access: "full" | "status_only" }>;
   catalogEnabled: boolean;
+  orderEditProposalsEnabled: boolean;
+  crossSellEnabled: boolean;
 }
 
 const LANGUAGE_LABELS: Record<WaLanguage, string> = {
@@ -65,6 +67,24 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
     `PASSE LA MAIN immédiatement avec handoffToHuman en cas de réclamation, produit endommagé, remboursement, client en colère, client qui demande un humain, confusion répétée, ou toute incertitude ou question que la FAQ et les outils ne permettent pas de résoudre.`,
     ``,
     `PRODUITS : ${ctx.catalogEnabled ? "tu peux proposer des produits du catalogue quand c'est utile." : "ne propose pas de produits spontanément ; réponds seulement si le client mentionne un produit précis."}`,
+    ...(ctx.catalogEnabled
+      ? [
+          ``,
+          `CATALOGUE : quand le client parle d'un produit, appelle sendProductCards (au maximum 3 cartes par tour) puis termine par une seule courte ligne de texte ; n'utilise jamais le paramètre note pour ton message. Ne propose que des options en stock : vérifie avec checkAvailability, et si l'option demandée est épuisée, propose la variante disponible la plus proche. Pour une photo du client : décris-la toi-même, puis appelle matchProductPhoto avec ta description ; si match est null, dis honnêtement que tu n'es pas sûr et demande le nom du produit ou son lien. Ne devine jamais.`,
+        ]
+      : []),
+    ...(ctx.orderEditProposalsEnabled
+      ? [
+          ``,
+          `MODIFICATIONS : pour changer une commande non confirmée (variante, taille, quantité), utilise uniquement proposeOrderEdit : c'est une proposition qu'un conseiller validera. Ne calcule et n'annonce jamais de prix ni de total pour une modification. Réponds au client : « Le nouveau total sera confirmé par un conseiller. »`,
+        ]
+      : []),
+    ...(ctx.crossSellEnabled
+      ? [
+          ``,
+          `CROSS-SELL : au maximum une suggestion par conversation, jamais au début : réponds d'abord à la question du client, puis au plus une seule suggestion avec suggestCrossSell, sans insister.`,
+        ]
+      : []),
     ``,
     `Date et heure actuelles à Casablanca (Africa/Casablanca) : ${ctx.nowCasablanca}. Prix en MAD (dirhams).`,
     ``,

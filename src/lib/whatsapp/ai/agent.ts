@@ -1,5 +1,5 @@
 import { isStepCount, ToolLoopAgent, type ImagePart, type TextPart, type UserModelMessage } from "ai";
-import { storeConfig } from "@/config";
+import rawStoreConfig from "../../../../store.config";
 import { aiBudgetAvailable } from "@/lib/services/whatsapp-ai-usage";
 import {
   flagHandoff,
@@ -11,8 +11,9 @@ import { effectiveAssistantName, getWhatsAppSettings } from "@/lib/services/what
 import { msgHandoff } from "@/lib/whatsapp/copy";
 import { whatsappModels } from "@/lib/whatsapp/config";
 import { AiBudgetExceededError, openRouterProvider, recordUsage, usageFromSdk, withFallback } from "./provider";
+import { createCatalogTools, type CatalogToolsContext } from "./catalog-tools";
 import { buildSystemPrompt } from "./prompt";
-import { createWhatsAppTools, MAX_TOOL_CALLS_PER_TURN, type WhatsAppToolsContext } from "./tools";
+import { createWhatsAppTools, MAX_TOOL_CALLS_PER_TURN } from "./tools";
 
 /** One customer turn for the WhatsApp assistant. Audio arrives already transcribed. */
 export interface AgentTurnInput {
@@ -25,6 +26,14 @@ export interface AgentTurnResult {
   handedOff: boolean;
   model: string;
   toolCalls: string[];
+  /**
+   * Product cards enqueued in the outbox during this turn (catalog tools only).
+   * Cards are enqueued while the tools run, so they are due before the text replies:
+   * callers must enqueue the `ai_reply` rows for `replies` only after this resolves,
+   * and can start their per-turn dedupe index at `productCardsQueued` so reply keys
+   * never collide with the `card:` keys.
+   */
+  productCardsQueued: number;
 }
 
 export const MAX_CONTEXT_MESSAGES = 20;
@@ -111,7 +120,13 @@ export async function runWhatsAppAgent(input: AgentTurnInput): Promise<AgentTurn
   }
 
   const settings = getWhatsAppSettings();
-  const storeName = storeConfig.name;
+  // Raw store.config import (not the server-only @/config module): same pattern as
+  // src/lib/whatsapp/notify.ts and src/lib/services/carrier-status-map.ts so this
+  // module loads in node tests. Widen first: store.config.ts pins the template's
+  // locale as a literal, and fresh copies legitimately switch it to "ar".
+  const storeName: string = rawStoreConfig.name;
+  const rawLocale: string = rawStoreConfig.locale;
+  const storeLocale: "fr" | "ar" = rawLocale === "ar" ? "ar" : "fr";
   const assistantName = effectiveAssistantName(settings, storeName);
   const language: WaLanguage = conversation.language ?? "fr";
 
@@ -123,6 +138,8 @@ export async function runWhatsAppAgent(input: AgentTurnInput): Promise<AgentTurn
     nowCasablanca: nowCasablanca(),
     orders: conversation.orders.map((o) => ({ ref: o.ref, access: o.access })),
     catalogEnabled: settings.catalogSuggestionsEnabled,
+    orderEditProposalsEnabled: settings.orderEditProposalsEnabled,
+    crossSellEnabled: settings.crossSellEnabled,
   });
 
   const contextMessages = recentContext(conversation.id, MAX_CONTEXT_MESSAGES)
@@ -134,10 +151,17 @@ export async function runWhatsAppAgent(input: AgentTurnInput): Promise<AgentTurn
 
   const models = whatsappModels();
   const provider = openRouterProvider();
-  const toolsCtx: WhatsAppToolsContext = {
+  const toolsCtx: CatalogToolsContext = {
     conversationId: conversation.id,
     phone: conversation.phone,
+    language,
+    productCardsQueued: 0,
     toolCalls: [],
+  };
+  const catalogToolFlags = {
+    catalog: settings.catalogSuggestionsEnabled,
+    editProposals: settings.orderEditProposalsEnabled,
+    crossSell: settings.crossSellEnabled,
   };
 
   const { result: response, model } = await withFallback(
@@ -147,7 +171,9 @@ export async function runWhatsAppAgent(input: AgentTurnInput): Promise<AgentTurn
       const agent = new ToolLoopAgent({
         model: provider.chatModel(modelId),
         instructions: systemPrompt,
-        tools: createWhatsAppTools(toolsCtx),
+        // Catalog tools merge in only for their enabled flags: with every flag OFF
+        // the tool set is exactly the base set.
+        tools: { ...createWhatsAppTools(toolsCtx), ...createCatalogTools(toolsCtx, catalogToolFlags) },
         stopWhen: isStepCount(MAX_AGENT_STEPS),
         // Reserve the last step for a plain-text answer instead of another tool call.
         prepareStep: ({ stepNumber }) => (stepNumber >= MAX_AGENT_STEPS - 1 ? { toolChoice: "none" as const } : {}),
@@ -181,7 +207,7 @@ export async function runWhatsAppAgent(input: AgentTurnInput): Promise<AgentTurn
   if (replies.length === 0 && !handedOff) {
     replies = [
       msgHandoff({
-        locale: storeConfig.locale,
+        locale: storeLocale,
         storeName,
         assistantName,
         seed: conversation.id,
@@ -190,5 +216,11 @@ export async function runWhatsAppAgent(input: AgentTurnInput): Promise<AgentTurn
     flagHandoff(conversation.id, "réponse IA vide");
   }
 
-  return { replies, handedOff, model, toolCalls: toolCalls.slice(0, MAX_TOOL_CALLS_PER_TURN) };
+  return {
+    replies,
+    handedOff,
+    model,
+    toolCalls: toolCalls.slice(0, MAX_TOOL_CALLS_PER_TURN),
+    productCardsQueued: toolsCtx.productCardsQueued,
+  };
 }

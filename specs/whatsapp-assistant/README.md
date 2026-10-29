@@ -163,9 +163,9 @@ graph TD
 - [x] [task-20-courier-provider-groundwork](./tasks/task-20-courier-provider-groundwork.md): Courier provider groundwork — SUPERSEDED by specs/sendit-courier
 
 ### Wave 4
-- [ ] [task-21-inbound-processor](./tasks/task-21-inbound-processor.md): Inbound processor
-- [ ] [task-22-inbox-ui](./tasks/task-22-inbox-ui.md): CRM inbox UI
-- [ ] [task-23-catalog-tools](./tasks/task-23-catalog-tools.md): Catalog tools for the AI
+- [x] [task-21-inbound-processor](./tasks/task-21-inbound-processor.md): Inbound processor
+- [x] [task-22-inbox-ui](./tasks/task-22-inbox-ui.md): CRM inbox UI
+- [x] [task-23-catalog-tools](./tasks/task-23-catalog-tools.md): Catalog tools for the AI
 
 ### Wave 5
 - [ ] [task-24-whatsapp-worker](./tasks/task-24-whatsapp-worker.md): WhatsApp worker and health
