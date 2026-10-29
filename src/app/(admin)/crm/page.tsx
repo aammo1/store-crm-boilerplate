@@ -16,6 +16,10 @@ import {
 
 import { requireUser } from "@/lib/auth-guards";
 import { formatCasablanca } from "@/lib/services/orders";
+import { courierProfile } from "@/lib/env";
+import { COURIERS } from "@/lib/shipping/couriers";
+import { getCourierHealth } from "@/lib/services/courier-health";
+import { CourierHealthCard } from "@/components/crm/courier-health-card";
 import {
   getDashboard,
   type DashboardOrderRow,
@@ -38,6 +42,8 @@ const NORMALIZED_STATUS_LABELS: Record<string, string> = {
   in_transit: "En transit",
   out_for_delivery: "En cours de livraison",
   at_facility: "Au dépôt",
+  awaiting_pickup: "En attente de ramassage",
+  delivery_issue: "Colis à problème",
   unknown: "Inconnu",
 };
 
@@ -216,9 +222,11 @@ function SubmissionRows({
 function ParcelRows({
   rows,
   emptyLabel,
+  showBlRef = true,
 }: {
   rows: DashboardParcelRow[];
   emptyLabel: string;
+  showBlRef?: boolean;
 }) {
   if (rows.length === 0) return <EmptyRow label={emptyLabel} />;
   return (
@@ -237,7 +245,7 @@ function ParcelRows({
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {row.cityName ?? "Ville inconnue"}
             {row.trackingNumber ? ` · Suivi ${row.trackingNumber}` : " · Suivi en attente"}
-            {row.blRef ? ` · BL ${row.blRef}` : ""}
+            {showBlRef && row.blRef ? ` · BL ${row.blRef}` : ""}
           </p>
         </li>
       ))}
@@ -377,7 +385,10 @@ export default async function CrmDashboardPage({
   // Role is enforced inside getKpis: agents never receive money fields.
   const kpis = getKpis({ from, to, role: user.role === "admin" ? "admin" : "agent" });
   const data = getDashboard();
+  const courierHealth = getCourierHealth();
   const { syncHealth } = data;
+  const profile = courierProfile();
+  const hasDeliveryNotes = COURIERS[profile].capabilities.deliveryNotes;
 
   return (
     <div className="space-y-6">
@@ -391,6 +402,24 @@ export default async function CrmDashboardPage({
       </div>
 
       <KpiSection kpis={kpis} preset={preset} />
+
+      {data.deliveryIssuesCount > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--crm-danger)]/40 bg-[var(--crm-danger-bg)] p-4 text-sm text-[var(--crm-danger)]">
+          <div className="flex items-center gap-2">
+            <AlertTriangleIcon className="size-4 shrink-0" aria-hidden />
+            <span>
+              <strong>Colis à problème : {data.deliveryIssuesCount}</strong> (injoignable, reporté, adresse à changer)
+            </span>
+          </div>
+          <Link
+            href="/crm/orders?tracking=delivery_issue"
+            className="flex items-center gap-1 font-medium hover:underline"
+          >
+            Voir les commandes
+            <ArrowRightIcon className="size-3.5" aria-hidden />
+          </Link>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <DashboardCard
@@ -451,7 +480,7 @@ export default async function CrmDashboardPage({
         </DashboardCard>
 
         <DashboardCard
-          title="À expédier (BL)"
+          title={hasDeliveryNotes ? "À expédier (BL)" : "À expédier (étiquettes)"}
           icon={PackageIcon}
           href="/crm/expeditions"
           linkLabel="Ouvrir les expéditions"
@@ -459,7 +488,12 @@ export default async function CrmDashboardPage({
         >
           <ParcelRows
             rows={data.readyBl.rows}
-            emptyLabel="Aucun colis à mettre sur un BL."
+            emptyLabel={
+              hasDeliveryNotes
+                ? "Aucun colis à mettre sur un BL."
+                : "Aucun colis à étiqueter."
+            }
+            showBlRef={hasDeliveryNotes}
           />
         </DashboardCard>
 
@@ -558,6 +592,8 @@ export default async function CrmDashboardPage({
           />
         </DashboardCard>
       </div>
+
+      <CourierHealthCard health={courierHealth} isAdmin={user.role === "admin"} />
 
       <section
         className={cn(

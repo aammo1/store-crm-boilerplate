@@ -22,6 +22,8 @@ import { getOrderEditState, listOrderEdits, orderCityFeeProposal, orderEditOptio
 import { MissingOrderShippingRulesError, orderShippingRules } from "@/lib/services/order-lines";
 import { CopyButton } from "@/components/crm/copy-button";
 import { SubmissionResolveForm } from "@/components/crm/submission-resolve-form";
+import { getProvider } from "@/lib/shipping";
+import { courierLabel } from "@/lib/shipping/courier-copy";
 import { ContactLogForm } from "@/components/crm/contact-log-form";
 import {
   COD_STATUS_LABELS,
@@ -191,6 +193,10 @@ export default async function OrderDetailPage({
   ];
   const trackingNumber = order.submission?.trackingNumber ?? null;
   const deliveryOutcome = getDeliveryOutcome(order.id);
+  const provider = getProvider();
+  const lookupCourierLabel = provider.capabilities.parcelLookup
+    ? courierLabel()
+    : undefined;
 
   return (
     <div className="space-y-6">
@@ -528,7 +534,10 @@ export default async function OrderDetailPage({
             {order.submission &&
             order.confirmationStatus === "confirmed" &&
             ["needs_review", "failed"].includes(order.submission.status) ? (
-              <SubmissionResolveForm submissionId={order.submission.id} />
+              <SubmissionResolveForm
+                submissionId={order.submission.id}
+                lookupCourierLabel={lookupCourierLabel}
+              />
             ) : null}
             {order.confirmationStatus === "confirmed" &&
             order.submission?.status === "submitted" &&

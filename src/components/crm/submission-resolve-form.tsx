@@ -7,28 +7,73 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { formatCasablancaDisplay } from "@/lib/callback-time";
 
 const fieldClassName =
   "w-full border-input bg-background text-foreground placeholder:text-muted-foreground/50 focus-visible:border-ring focus-visible:ring-ring/20";
 
 type Outcome = "parcel_exists" | "no_parcel";
 
+type LookupResult =
+  | {
+      status: "found";
+      trackingNumber: string;
+      rawStatus: string | null;
+      statusLabel: string | null;
+      reference: string;
+    }
+  | { status: "not_found"; reference: string }
+  | { status: "inconclusive"; reference: string; message: string };
+
+interface SubmissionResolveFormProps {
+  submissionId: string;
+  lookupCourierLabel?: string;
+}
+
 /**
  * Attributed resolution of a failed / uncertain courier submission. The agent
  * must have checked the courier portal first; the evidence is stored with the
  * decision (no SQL edits, no blind retries).
  */
-export function SubmissionResolveForm({ submissionId }: { submissionId: string }) {
+export function SubmissionResolveForm({
+  submissionId,
+  lookupCourierLabel,
+}: SubmissionResolveFormProps) {
   const router = useRouter();
   const [outcome, setOutcome] = useState<Outcome | "">("");
   const [trackingNumber, setTrackingNumber] = useState("");
   const [evidence, setEvidence] = useState("");
   const [pending, setPending] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupResult, setLookupResult] = useState<LookupResult | null>(null);
 
   const ready =
     outcome !== "" &&
     evidence.trim().length >= 10 &&
     (outcome !== "parcel_exists" || trackingNumber.trim().length >= 3);
+
+  async function handleLookup() {
+    if (lookupLoading || pending) return;
+    setLookupLoading(true);
+    try {
+      const response = await fetch(`/api/crm/submissions/${submissionId}/lookup`, {
+        method: "POST",
+      });
+      const data = (await response.json().catch(() => null)) as
+        | LookupResult
+        | { error?: string }
+        | null;
+      if (!response.ok) {
+        toast.error((data as { error?: string })?.error ?? "Recherche impossible.");
+        return;
+      }
+      setLookupResult(data as LookupResult);
+    } catch {
+      toast.error("Recherche impossible.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
 
   async function submit() {
     if (!ready || pending) return;
@@ -69,6 +114,80 @@ export function SubmissionResolveForm({ submissionId }: { submissionId: string }
         commande ? Ne renvoyez jamais sans cette vérification (risque de doublon
         et de double encaissement).
       </p>
+
+      {lookupCourierLabel ? (
+        <div className="space-y-2 border-b border-border/40 pb-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleLookup}
+            disabled={lookupLoading || pending}
+          >
+            {lookupLoading ? "Recherche en cours…" : `Chercher chez ${lookupCourierLabel}`}
+          </Button>
+
+          {lookupResult?.status === "found" ? (
+            <div className="rounded-md border border-[var(--crm-success)]/40 bg-[var(--crm-success-bg)] p-3 text-sm">
+              <p className="font-medium text-[var(--crm-success)]">
+                Colis trouvé : {lookupResult.trackingNumber} (
+                {lookupResult.statusLabel ?? lookupResult.rawStatus ?? "statut inconnu"}) — référence{" "}
+                {lookupResult.reference}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={() => {
+                  setOutcome("parcel_exists");
+                  setTrackingNumber(lookupResult.trackingNumber);
+                  const date = formatCasablancaDisplay(new Date());
+                  setEvidence(
+                    `Recherche API ${lookupCourierLabel} le ${date} : colis ${lookupResult.trackingNumber}, référence ${lookupResult.reference}.`,
+                  );
+                }}
+              >
+                Utiliser ce résultat
+              </Button>
+            </div>
+          ) : null}
+
+          {lookupResult?.status === "not_found" ? (
+            <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">
+              <p className="text-foreground">
+                Aucun colis actif avec la référence {lookupResult.reference} chez{" "}
+                {lookupCourierLabel}.
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Vérifiez aussi le portail si un doute subsiste.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={() => {
+                  setOutcome("no_parcel");
+                  const date = formatCasablancaDisplay(new Date());
+                  setEvidence(
+                    `Recherche API ${lookupCourierLabel} le ${date} : aucun colis actif pour la référence ${lookupResult.reference}.`,
+                  );
+                }}
+              >
+                Utiliser ce résultat
+              </Button>
+            </div>
+          ) : null}
+
+          {lookupResult?.status === "inconclusive" ? (
+            <div className="rounded-md border border-[var(--crm-warning)]/40 bg-[var(--crm-warning-bg)] p-3 text-sm">
+              <p className="text-xs text-foreground/90">{lookupResult.message}</p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <fieldset className="space-y-2">
         <label className="flex items-start gap-2 text-sm text-foreground">
           <input

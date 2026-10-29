@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { deliveryProviderName, runtimeEnvWarnings } from "@/lib/env";
 import { workerLeaseStatus } from "@/lib/services/process-lease";
 import { pollIntervalMs } from "@/lib/services/tracking";
+import { getCourierHealth } from "@/lib/services/courier-health";
 import {
   isWorkerStale,
   overallStatus,
@@ -80,12 +81,22 @@ export function GET(request: Request): NextResponse {
     if (!detailsAuthorized(request)) {
       return NextResponse.json({ status, time }, { headers });
     }
+    const courierHealth = getCourierHealth();
     return NextResponse.json(
       {
         status,
         time,
         db: true,
         provider: deliveryProviderName(),
+        courier: {
+          name: deliveryProviderName(),
+          profile: courierHealth.courier,
+          configured: courierHealth.configured,
+          issues: courierHealth.issues,
+          citiesCount: courierHealth.citiesCount,
+          lastCitiesSyncAt: courierHealth.lastCitiesSyncAt,
+          lastTrackingSyncAt: courierHealth.lastTrackingSyncAt,
+        },
         warnings: runtimeEnvWarnings(),
         lease: workerLeaseStatus(),
         workers,

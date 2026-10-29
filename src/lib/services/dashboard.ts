@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { deliveryProviderName } from "@/lib/env";
 import {
   NEXT_CALLBACK_SQL,
   endOfTodayCasablancaIso,
@@ -112,6 +113,7 @@ export interface DashboardData {
   returns: DashboardReturns;
   lowStockItems: DashboardList<LowStockRow>;
   syncHealth: DashboardSyncHealth;
+  deliveryIssuesCount: number;
 }
 
 interface OrderCountRow {
@@ -450,8 +452,9 @@ function lowStockCard(): DashboardList<LowStockRow> {
 function syncHealth(now: Date): DashboardSyncHealth {
   const health = getTrackingHealth(now);
   const citiesRow = getDb()
-    .prepare("SELECT MAX(updated_at) AS at FROM cities")
-    .get() as { at: string | null };
+    .prepare("SELECT MAX(updated_at) AS at FROM cities WHERE provider = ?")
+    .get(deliveryProviderName()) as { at: string | null } | undefined;
+  const at = citiesRow?.at ?? null;
   return {
     lastSuccessfulSync: health.lastSuccessfulSync,
     lastSyncLabel: relativeLabel(health.lastSuccessfulSync, now),
@@ -460,10 +463,21 @@ function syncHealth(now: Date): DashboardSyncHealth {
       : null,
     failing: health.failing,
     staleParcels: health.staleParcels,
-    citiesLastSync: citiesRow.at,
-    citiesLastSyncLabel: relativeLabel(citiesRow.at, now),
-    citiesLastSyncAbsolute: citiesRow.at ? formatCasablanca(citiesRow.at) : null,
+    citiesLastSync: at,
+    citiesLastSyncLabel: relativeLabel(at, now),
+    citiesLastSyncAbsolute: at ? formatCasablanca(at) : null,
   };
+}
+
+export function countDeliveryIssues(): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS c
+       FROM courier_submissions
+       WHERE status = 'submitted' AND normalized_status = 'delivery_issue'`,
+    )
+    .get() as { c: number } | undefined;
+  return row ? Number(row.c) : 0;
 }
 
 export function getDashboard(now: Date = new Date()): DashboardData {
@@ -479,5 +493,6 @@ export function getDashboard(now: Date = new Date()): DashboardData {
     returns: returnsCard(),
     lowStockItems: lowStockCard(),
     syncHealth: syncHealth(now),
+    deliveryIssuesCount: countDeliveryIssues(),
   };
 }

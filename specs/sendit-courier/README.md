@@ -101,10 +101,10 @@ graph TD
 - [x] [task-12-city-search-confirm-guards](./tasks/task-12-city-search-confirm-guards.md) — Arabic/alias city search and confirm guards
 
 ### Wave 4
-- [ ] [task-13-sendit-parcel-lookup](./tasks/task-13-sendit-parcel-lookup.md) — "Chercher chez Sendit" lookup
-- [ ] [task-14-courier-health](./tasks/task-14-courier-health.md) — Courier health card and /api/health
-- [ ] [task-15-courier-contract-tests](./tasks/task-15-courier-contract-tests.md) — Courier contract tests
-- [ ] [task-16-sendit-verify-script](./tasks/task-16-sendit-verify-script.md) — sendit:verify live read-only script
+- [x] [task-13-sendit-parcel-lookup](./tasks/task-13-sendit-parcel-lookup.md) — "Chercher chez Sendit" lookup
+- [x] [task-14-courier-health](./tasks/task-14-courier-health.md) — Courier health card and /api/health
+- [x] [task-15-courier-contract-tests](./tasks/task-15-courier-contract-tests.md) — Courier contract tests
+- [x] [task-16-sendit-verify-script](./tasks/task-16-sendit-verify-script.md) — sendit:verify live read-only script
 
 ### Wave 5
 - [ ] [task-17-docs-policy](./tasks/task-17-docs-policy.md) — Docs, policy, AGENTS.md, ai-memory README
