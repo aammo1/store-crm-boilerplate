@@ -107,7 +107,7 @@ graph TD
 - [x] [task-16-sendit-verify-script](./tasks/task-16-sendit-verify-script.md) — sendit:verify live read-only script
 
 ### Wave 5
-- [ ] [task-17-docs-policy](./tasks/task-17-docs-policy.md) — Docs, policy, AGENTS.md, ai-memory README
+- [x] [task-17-docs-policy](./tasks/task-17-docs-policy.md) — Docs, policy, AGENTS.md, ai-memory README
 
 ### Deferred (not part of implementation runs)
 - [ ] [task-18-sendit-webhook](./tasks/task-18-sendit-webhook.md) — Sendit status webhook (deferred)

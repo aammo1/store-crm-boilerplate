@@ -9,7 +9,7 @@ boutique vérifiée et en ligne. Les identifiants techniques restent en anglais.
 - Node.js 22+, un compte GitHub, un accès Coolify (ou tout hôte Docker) et un domaine.
 - Le nom de domaine, le logo (PNG/JPG/SVG/WebP), la ville, le numéro WhatsApp.
 - Facultatif au départ : identifiants Meta (Pixel ID + token) et TikTok (pixel code +
-  token), accès Ozon Express (`OZON_CLIENT_ID`, `OZON_API_KEY`).
+  token), accès transporteur : Ozon Express (`OZON_CLIENT_ID`, `OZON_API_KEY`) ou Sendit (`SENDIT_PUBLIC_KEY`, `SENDIT_SECRET_KEY`).
 
 ## 2. Créer le dépôt
 
@@ -28,17 +28,20 @@ npm run new-store
 
 Il demande : identité (nom, slug, domaine, langue `fr`/`ar`, niche, ville), contact
 (WhatsApp, téléphone, email), marque (logo, couleurs principale/accent, style, arrondis,
-image principale), catégories, suivi facultatif (Meta, TikTok), Ozon facultatif, et
+image principale), catégories, suivi facultatif (Meta, TikTok), choix du transporteur
+(`ozon` ou `sendit`) et ses identifiants facultatifs (`OZON_*` ou `SENDIT_*`), et
 le premier administrateur (email, nom, mot de passe de 12 à 128 caractères).
 
 Il écrit : `store.config.ts`, les visuels traités dans `public/brand/`, `.env.local`
-(mock, développement), `.env.production.example` (production), complète `.gitignore`
-(`.env*`) et crée l’administrateur. Il vérifie le TypeScript et restaure l’ancien
+(mock, développement, avec `MOCK_COURIER_PROFILE` adapté), `.env.production.example` (production),
+complète `.gitignore` (`.env*`) et crée l’administrateur. Il vérifie le TypeScript et restaure l’ancien
 `store.config.ts` en cas d’erreur.
 
 Options :
 
 - `--answers <fichier.json>` : mode non interactif (voir `examples/new-store-answers.json`).
+  Clés transporteur acceptées : `courier` (`"ozon"` ou `"sendit"`), et selon le cas
+  `ozonClientId` / `ozonApiKey` ou `senditPublicKey` / `senditSecretKey`.
   Si `adminPassword` est vide, un mot de passe aléatoire est généré et affiché une seule fois.
 - `--slug <slug>` : impose le slug de la boutique (prioritaire sur le fichier de réponses,
   proposé par défaut en mode interactif) ; utilisé par `new-niche.py` d’`ai-memory-boilerplate` pour garder le même nom partout.
@@ -49,10 +52,10 @@ Options :
 
 > **Secrets** : `.env.production.example` contient de **vrais secrets générés**
 > (`AUTH_SECRET`, `STOREFRONT_API_KEY`, et la même `CATALOG_AGENT_KEY` que `.env.local`) et,
-> si saisis, vos tokens Meta/TikTok et vos identifiants Ozon, en clair. Le fichier est ignoré par git malgré
+> si saisis, vos tokens Meta/TikTok et vos identifiants transporteur (Ozon ou Sendit), en clair. Le fichier est ignoré par git malgré
 > son nom « example » : ne jamais le committer, l’envoyer ou le coller ailleurs que dans
-> les variables d’environnement Coolify. Il fixe `DELIVERY_PROVIDER=ozon` si vos identifiants
-> Ozon ont été saisis, ou `mock` sinon : voir l’étape 10.
+> les variables d’environnement Coolify. Il fixe `DELIVERY_PROVIDER=ozon` ou `DELIVERY_PROVIDER=sendit` si vos identifiants
+> de transporteur ont été saisis, ou `mock` sinon : voir l’étape 10.
 
 ## 4. Personnaliser
 
@@ -75,7 +78,9 @@ conserve tant qu’il ne la change pas.
 
 ## 6. Paramètres
 
-`/crm/parametres` : frais de livraison, seuil de livraison gratuite, upsell.
+`/crm/parametres` : frais de livraison, seuil de livraison gratuite, upsell, et
+si Sendit est utilisé : sélection obligatoire du **quartier de ramassage** dans « Transporteur Sendit »,
+ainsi que les préférences d'ouverture et d'essayage du colis.
 
 ## 7. Équipe
 
@@ -89,8 +94,9 @@ conserve tant qu’il ne la change pas.
    `SECURITY_TRUSTED_IP_HEADER` (ex. `x-forwarded-for` derrière un proxy inverse maîtrisé)
    **ou** `SECURITY_ACCEPT_GLOBAL_BUDGETS="1"` (sinon le conteneur refuse de démarrer). Vérifier
    `CRM_PUBLIC_URL` et `SECURITY_ALLOWED_ORIGINS` (domaine public en `https://`),
-   `DELIVERY_PROVIDER` (`mock` au départ si Ozon a été ignoré), les tokens Meta/TikTok
-   (`FACEBOOK_*`, `TIKTOK_*`) et les identifiants Ozon. `PORT` doit correspondre au port écouté (3000).
+   `DELIVERY_PROVIDER` (`ozon` ou `sendit`, ou `mock` au départ si les identifiants ont été ignorés),
+   les clés du transporteur choisi (`OZON_CLIENT_ID`/`OZON_API_KEY` ou `SENDIT_PUBLIC_KEY`/`SENDIT_SECRET_KEY`),
+   et les tokens Meta/TikTok (`FACEBOOK_*`, `TIKTOK_*`). `PORT` doit correspondre au port écouté (3000).
 4. Health check : `/api/health`.
 5. **Une seule réplique** (SQLite) ; pas de déploiement roulant.
 6. Le build n’a pas besoin de base. Si l’administrateur n’a pas été créé sur la base de
@@ -119,9 +125,19 @@ acceptés). Détails : [operations](operations.md#optionnel--cloudflare).
 
 ## 10. Vérifier
 
-- **Fournisseur** : commencer avec `DELIVERY_PROVIDER=mock`, passer les commandes de
-  test, puis basculer sur `ozon` sur une base propre (voir la section Ozon de
-  [operations](operations.md)).
+- **Fournisseur** : commencer avec `DELIVERY_PROVIDER=mock` (avec `MOCK_COURIER_PROFILE`
+  défini sur `ozon` ou `sendit`), passer les commandes de test, puis basculer sur le transporteur réel
+  sur une base propre (voir les sections d'activation dans [operations](operations.md)).
+- **Parcours Ozon** :
+  - Vérifier la connexion en lecture seule : `npm run ozon:verify -- --live --yes`.
+  - Circuit d'expédition : création de colis → création et sauvegarde de BL → impression PDF du BL → remise au livreur.
+  - Statuts de suivi non mappés par défaut (outcomes Livré/Refusé enregistrés manuellement par les agents).
+- **Parcours Sendit** :
+  - Vérifier la connexion en direct : `npm run sendit:verify -- --live --yes`.
+  - Sélectionner obligatoirement le quartier de ramassage dans `/crm/parametres` → « Transporteur Sendit ».
+  - Circuit d'expédition : création de colis → sélection dans « Expéditions (Étiquettes) » → impression des étiquettes 10×10 (PDF) → confirmation explicite de remise groupée au livreur.
+  - Suivi automatique avec outcomes de livraison (`DELIVERED` → Livré, `REJECTED` → Refusé) et alertes `delivery_issue`.
+  - En cas d'erreur de soumission incertaine : bouton « Chercher chez Sendit » dans la fiche commande pour vérifier si le colis existe chez Sendit avant toute décision.
 - **Commandes de test** : une via le catalogue (panier → nom et téléphone → upsell →
   `/merci`) et une via `/l/<slug>` (pack → formulaire → upsell → `/merci`) ; elles
   apparaissent dans `/crm/orders`, avec le total attendu.
@@ -141,7 +157,11 @@ Les copies ne reçoivent aucune mise à jour automatique : voir
 ## 12. Checklist de mise en ligne
 
 - [ ] Volume persistant monté sur `/app/data` (Coolify) : voir l’étape 8.
-- [ ] Variables : `AUTH_SECRET` stable, `SECURITY_ALLOWED_ORIGINS` = origine exacte `https://`, `DELIVERY_PROVIDER=ozon` + `OZON_CLIENT_ID`/`OZON_API_KEY`, tokens Meta/TikTok facultatifs.
+- [ ] Variables de base : `AUTH_SECRET` stable, `SECURITY_ALLOWED_ORIGINS` = origine exacte `https://`, tokens Meta/TikTok facultatifs.
+- [ ] Transporteur actif :
+  - [ ] **Option Ozon** : `DELIVERY_PROVIDER=ozon` + `OZON_CLIENT_ID` et `OZON_API_KEY` valides, test `npm run ozon:verify -- --live --yes` réussi.
+  - [ ] **Option Sendit** : `DELIVERY_PROVIDER=sendit` + `SENDIT_PUBLIC_KEY` et `SENDIT_SECRET_KEY` valides, test `npm run sendit:verify -- --live --yes` réussi, quartier de ramassage configuré dans `/crm/parametres`.
+  - [ ] **Option Mock** : `DELIVERY_PROVIDER=mock` temporaire si en attente des clés de production.
 - [ ] Mot de passe administrateur vérifié ou changé (`scripts/create-user.mjs`, étape 8).
 - [ ] Si pixels configurés : noms d’événements et événements de test confirmés dans les Events Managers Meta/TikTok.
 - [ ] Une vraie commande de test passée, visible dans `/crm/orders` (étape 10).

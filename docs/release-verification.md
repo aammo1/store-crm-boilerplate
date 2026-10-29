@@ -163,6 +163,10 @@ scripts/fresh-install.test.mjs
 scripts/fulfillment-fixtures.mjs
 scripts/release-integration.test.mjs
 scripts/release-tree.mjs
+scripts/sendit-verify.mjs
+src/lib/shipping/city-sync.ts
+src/lib/shipping/couriers.ts
+src/lib/shipping/sendit.ts
 src/lib/validation.ts
 ```
 

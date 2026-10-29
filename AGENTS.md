@@ -31,6 +31,7 @@ secrets. No shared multi-tenant state or automatic template updates.
   create/update, 12–128 character password; existing email reactivates and bumps
   session version. Run from repo root, scripts do not load `.env.local`.
 - `npm run new-store` — new-niche wizard
+- `npm run sendit:verify` — live Sendit connection/district/status check (use `--live --yes`)
 - `npm run perf-budget` — storefront first-load JS budget, run after build
 - `npm run backup` — online SQLite snapshot + uploads + manifest; in image use `node scripts/backup-db.mjs`
 - `npm run backup:verify` — restore check of a snapshot on a temp copy; in image `node scripts/verify-backup.mjs`
@@ -47,7 +48,8 @@ secrets. No shared multi-tenant state or automatic template updates.
   edits/history/lifecycle, fulfillment, returns, dashboard and optional integrations;
   also `delivery-outcomes`, `customers` (blocklist/history), `ad-spend`,
   `cod-remittances`, `city-tariffs`, `assignment`, `kpis` and `checkout-leads`.
-- `src/lib/shipping/`: mock/Ozon adapters, redaction, mapping and submission policy.
+- `src/lib/shipping/`: couriers.ts registry, city-sync.ts, mock/Ozon/Sendit adapters,
+  redaction, mapping and submission policy.
 - `src/lib/workers/`: parcel submission, tracking, optional Meta, via instrumentation.
 - `src/app/(admin)/`: login, `/admin` catalog and `/crm` operations/team/settings.
 - `src/app/api/storefront/v1/`: Bearer-authenticated server integration only.
@@ -108,8 +110,9 @@ are env-only. Never put secrets in URLs, logs, browser JSON or props.
 - Parcel creation only by submission worker, tracking only by poller. BL/handoff
   are explicit agent actions with durable claims. Uncertain BL steps require
   recorded portal reconciliation; no blind retry or automatic lease takeover.
-- Redact all Ozon credential-bearing URLs. Unknown/unverified tracking statuses
-  never automatically change stock; do not invent verified mappings.
+- Redact all Ozon credential-bearing URLs and Sendit secrets. Unknown/unverified tracking statuses
+  never automatically change stock; Sendit's map comes from the vendor-published status list,
+  Ozon's stays empty until verified.
 - Preserve admin/agent permissions, team controls and mobile CRM usability.
 - CRM/admin copy French. Storefront copy comes from `store.config.ts` and
   `src/config/i18n.ts` in the configured locale (fr or ar). Currency integer MAD,
@@ -124,9 +127,9 @@ are env-only. Never put secrets in URLs, logs, browser JSON or props.
 - Never reintroduce Google Sheets or webhook automation.
 - No boot-time product/user/order seeds. Local paths `data/crm.db`, `data/uploads`;
   containers persist `/app/data`, nonroot UID/GID 1001. One process owner per DB.
-- Every verification uses `DELIVERY_PROVIDER=mock`, temporary DB/media and ephemeral
-  credentials. Never load another store’s env or call live couriers. Only exact
-  `mock` selects mock in runtime code; unset/other values select Ozon.
+- Every verification uses `DELIVERY_PROVIDER=mock` (optional `MOCK_COURIER_PROFILE=ozon|sendit`),
+  temporary DB/media and ephemeral credentials. Never load another store’s env or call live couriers.
+  Only exact `mock` selects mock in runtime code; exact `sendit` selects Sendit; unset/other values select Ozon.
 - Optional assistant/catalog/Meta remain disabled when unconfigured. No paid keys
   or production credentials required for fresh empty startup.
 - Set exact `SECURITY_ALLOWED_ORIGINS` for CRM browser mutations. Never trust Host

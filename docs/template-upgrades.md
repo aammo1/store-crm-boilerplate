@@ -76,7 +76,7 @@ fichiers ; leurs checksums sont maintenant enregistrés dans `_migrations`.
 Changements d’environnement à reporter dans le `.env`/Compose privé de la copie
 (comparer avec `.env.example`, sans écraser les valeurs locales) :
 
-- `DELIVERY_PROVIDER` devient **obligatoire** en production (`mock` ou `ozon`).
+- `DELIVERY_PROVIDER` devient **obligatoire** en production (`mock`, `ozon` ou `sendit`).
 - `SECURITY_TRUSTED_IP_HEADER` **ou** `SECURITY_ACCEPT_GLOBAL_BUDGETS=1` obligatoire
   en production ; sinon le boot échoue (`src/lib/env.ts`).
 - Nouveaux, facultatifs : `HEALTH_DETAILS_TOKEN`, `LOG_FORMAT`, `LOG_LEVEL`,
@@ -94,6 +94,59 @@ Changements d’environnement à reporter dans le `.env`/Compose privé de la co
 upstream, date de création). Pour une copie plus ancienne, créer ce fichier à la
 main avec la révision upstream réellement utilisée, afin de cadrer les prochaines
 revues. Le contrat v1 est inchangé : les storefronts externes n’ont rien à migrer.
+
+## Appliquer la spec « Transporteur Sendit » (migration 029)
+
+Cette mise à niveau introduit le registre des transporteurs (`src/lib/shipping/couriers.ts`)
+avec capacités distinctes (Ozon : BL obligatoires ; Sendit : étiquettes 10×10, sans BL,
+lookup par référence), la migration `029_courier_providers.sql` et le support complet de Sendit.
+
+| Migration | Ajout |
+| --- | --- |
+| `029_courier_providers` | Colonnes `provider` sur `courier_submissions` et `cities`, colonnes `arabic_name` et `is_pickup` sur `cities`, index de performance |
+
+### Si la boutique reste sur Ozon
+
+- **Comportement strictement inchangé** : la boutique conserve le circuit Ozon (création de colis,
+  BL, PDF de BL, remise livreur, statuts inchangés).
+- **Migration 029 transparente** : appliquée automatiquement au premier boot. Les soumissions
+  et villes existantes sont rétro-remplies avec `provider = 'ozon'`.
+- **Variables d’environnement** : le renommage vers les variables génériques `COURIER_*` est
+  **optionnel**. Les anciennes variables `OZON_SUBMIT_INTERVAL_SEC`, `OZON_POLL_INTERVAL_MIN` et
+  `OZON_TRACK_BATCH` sont conservées comme valeurs de repli automatiques.
+
+### Changer de transporteur sur une boutique en production
+
+Chaque boutique utilise **un seul transporteur actif**. Le CRM n'est pas un routeur
+multi-transporteurs simultané et il n'y a **aucune migration automatique** des colis en cours
+ou des associations de villes. La bascule d'un transporteur à un autre (ex. d'Ozon vers Sendit)
+sur une boutique vivante est une opération délibérée, manuelle et sous revue marchande :
+
+1. **Finaliser ou solder tous les colis en cours** :
+   - Aucun colis ne doit rester en statut `queued`, `submitting` ou `needs_review`.
+   - Tous les colis expédiés avec l'ancien transporteur doivent avoir été remis (BL enregistré pour
+     Ozon, remise confirmée pour Sendit) et suivis jusqu'à leur terme (livré, refusé ou annulé), car
+     le poller de suivi ne synchronise que les colis du transporteur actif (`provider = deliveryProviderName()`).
+2. **Sauvegarder et vérifier la base de données** :
+   - Exécuter `npm run backup` et `npm run backup:verify` avant toute modification.
+3. **Mettre à jour les variables d’environnement** :
+   - Définir `DELIVERY_PROVIDER=sendit` (ou `ozon`).
+   - Renseigner les identifiants requis (`SENDIT_PUBLIC_KEY` et `SENDIT_SECRET_KEY` pour Sendit ;
+     `OZON_CLIENT_ID` et `OZON_API_KEY` pour Ozon).
+4. **Synchroniser les villes du nouveau transporteur** :
+   - Pour Sendit : exécuter `npm run sendit:verify -- --live --yes` (ou laisser la synchronisation
+     automatique du CRM s'exécuter). Les villes et quartiers du nouveau transporteur sont
+     enregistrés avec `provider = 'sendit'`, leurs noms arabes et leurs prix de livraison.
+5. **Configurer les paramètres transporteur (Sendit)** :
+   - Dans `/crm/parametres` → « Transporteur Sendit », sélectionner obligatoirement le quartier
+     de ramassage de la boutique (`pickupDistrictId`), puis ajuster les options d'ouverture et
+     d'essayage de colis. Sans quartier de ramassage configuré, la création de colis Sendit échoue.
+6. **Revoir les tarifs par ville et les commandes en attente** :
+   - La synchronisation pré-remplit les tarifs manquants à partir des prix de livraison du
+     transporteur. Revoir la grille dans `/crm/parametres`.
+   - Les commandes non confirmées qui avaient une ville liée à l'ancien transporteur doivent
+     être vérifiées par les agents lors de la confirmation téléphonique : la recherche de ville
+     (`CityCombobox`) est désormais filtrée sur le nouveau transporteur.
 
 Ajouter à la liste de vérification : `npm run test:unit` et
 `npm run test:release-tree`. Le test `scripts/unit/next-internals.test.mjs` vérifie
