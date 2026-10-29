@@ -48,6 +48,7 @@ const MAX_QUEUED_AGE_MS: Record<OutboxPurpose, number> = {
   ai_reply: HOUR_MS,
   product_card: HOUR_MS,
 };
+const DISABLED_NOTE = "Annulé : WhatsApp désactivé avant l’envoi.";
 const EXPIRED_NOTE = "Message expiré (trop ancien pour être envoyé).";
 
 /** Strips secrets and phone numbers from vendor error text and bounds its length. */
@@ -646,6 +647,21 @@ export function cancelQueuedForOrder(orderId: string, purposes?: OutboxPurpose[]
     `)
     .run(nowIso, orderId);
   return result.changes;
+}
+
+/**
+ * Cancels every queued message (kill switch turned off): nothing queued before
+ * the switch-off may go out later. Rows already sending/uncertain are untouched.
+ */
+export function cancelAllQueued(): number {
+  const nowIso = new Date().toISOString();
+  return getDb()
+    .prepare(`
+      UPDATE wa_outbox
+      SET status = 'cancelled', last_error = ?, updated_at = ?
+      WHERE status = 'queued'
+    `)
+    .run(DISABLED_NOTE, nowIso).changes;
 }
 
 /**

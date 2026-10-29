@@ -1,5 +1,5 @@
 import { getDb } from "@/lib/db";
-import { courierNumberEnv } from "@/lib/env";
+import { courierNumberEnv, deliveryProviderName } from "@/lib/env";
 import { getCrmOrder as getOrder } from "@/lib/services/orders";
 import { courierPortal } from "@/lib/shipping/courier-copy";
 import { ProviderError } from "@/lib/shipping/errors";
@@ -210,10 +210,10 @@ async function drain(provider: DeliveryProvider): Promise<void> {
   const due = getDb()
     .prepare(
       `SELECT id FROM courier_submissions
-       WHERE status = 'queued' AND next_retry_at <= ?
+       WHERE status = 'queued' AND provider = ? AND next_retry_at <= ?
        ORDER BY next_retry_at ASC LIMIT ${BATCH_SIZE}`,
     )
-    .all(nowIso()) as Array<{ id: string }>;
+    .all(deliveryProviderName(), nowIso()) as Array<{ id: string }>;
   for (const job of due) {
     await processOne(provider, job.id);
   }

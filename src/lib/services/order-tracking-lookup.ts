@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { normalizeMaPhone } from "@/lib/phone";
+import { orderRefSqlMatch } from "@/lib/whatsapp/phone";
 
 export type PublicTrackingStatus = "received" | "confirmed" | "shipped" | "delivered" | "refused" | "cancelled";
 export type PublicTracking = { status: PublicTrackingStatus; trackingNumber?: string; updatedAt: string };
@@ -17,11 +18,13 @@ export function lookupOrderTracking(orderRef: unknown, phone: unknown): PublicTr
   if (typeof orderRef !== "string" || typeof phone !== "string") return null;
   const ref = orderRef.trim().toUpperCase();
   const normalized = normalizeMaPhone(phone);
-  if (!normalized || !/^[A-Z0-9-]{4,40}$/.test(ref)) return null;
+  if (!normalized || !/^[A-Z0-9_-]{4,40}$/.test(ref)) return null;
   const db = getDb();
   const rows = db.prepare(`SELECT id, confirmation_status, delivery_outcome, updated_at FROM orders
-    WHERE customer_phone = ? AND (upper(id) = ? OR (length(?) >= 8 AND upper(id) LIKE ? ))
-    ORDER BY created_at DESC LIMIT 1`).get(normalized, ref, ref, `${ref}%`) as OrderRow | undefined;
+    WHERE customer_phone = ? AND (upper(id) = ?
+      OR (length(?) >= 8 AND upper(id) LIKE ? ESCAPE '\\')
+      OR (length(?) = 8 AND ${orderRefSqlMatch()}))
+    ORDER BY created_at DESC LIMIT 1`).get(normalized, ref, ref, `${ref.replace(/[\\%_]/g, "\\$&")}%`, ref, ref, ref) as OrderRow | undefined;
   if (!rows) return null;
   const submission = db.prepare(`SELECT tracking_number FROM courier_submissions
     WHERE order_id = ? AND status = 'submitted' ORDER BY created_at DESC LIMIT 1`).get(rows.id) as

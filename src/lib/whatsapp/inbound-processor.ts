@@ -486,7 +486,7 @@ async function processCustomerMessage(ev: ClaimedInbound): Promise<"done" | "ign
   // (three failed reference attempts) is also a strike.
   let linkResult: LinkResult | null = null;
   if (text && !isOther) {
-    linkResult = linkOrdersFromMessage(conv.id, text, now);
+    linkResult = linkOrdersFromMessage(conv.id, text, now, { countFailures: !isRetry });
     if (linkResult.newlyLocked) {
       const decision = recordStrike("ref_guessing");
       const outcome = handleStrikeDecision({

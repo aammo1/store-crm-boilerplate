@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { AuthGuardError, requireAdmin } from "@/lib/auth-guards";
 import { browserMutationAllowed } from "@/lib/browser-mutation";
 import { readLimitedJson, RequestBodyError } from "@/lib/request-body";
+import { cancelAllQueued } from "@/lib/services/whatsapp-outbox";
 import {
   getWhatsAppConnectionState,
   getWhatsAppSettings,
@@ -64,7 +65,9 @@ export async function PUT(request: Request) {
       return json({ error: "Origine non autorisée." }, 403);
     }
     const body = await readLimitedJson(request, 8192);
+    const wasEnabled = getWhatsAppSettings().enabled;
     const settings = updateWhatsAppSettings(body);
+    if (wasEnabled && !settings.enabled) cancelAllQueued();
     return json({ settings });
   } catch (error) {
     return failure(error);

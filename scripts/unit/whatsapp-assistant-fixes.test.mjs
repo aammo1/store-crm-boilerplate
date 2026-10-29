@@ -162,6 +162,42 @@ test("identity: every unmatched ref in a message counts, even beside a ref that 
   assert.equal(burst.newlyLocked, true);
 });
 
+test("identity: a retried event links without counting its failed refs a second time", () => {
+  const conv = conversationFor(nextPhone());
+  const first = svc.linkOrdersFromMessage(conv.id, "#DEAD0001 #DEAD0002");
+  assert.equal(first.failed, true);
+  assert.equal(failures(conv.id), 2);
+
+  const retry = svc.linkOrdersFromMessage(conv.id, "#DEAD0001 #DEAD0002", undefined, { countFailures: false });
+  assert.equal(retry.failed, true);
+  assert.equal(retry.newlyLocked, false);
+  assert.equal(failures(conv.id), 2, "no double count on retry");
+
+  const ownerPhone = nextPhone();
+  const own = makeOrder("0CCC0001-1111-4000-8000-000000000001", ownerPhone);
+  const ownerConv = conversationFor(ownerPhone);
+  svc.linkOrdersFromMessage(ownerConv.id, "#DEAD0001");
+  assert.equal(failures(ownerConv.id), 1);
+  const ok = svc.linkOrdersFromMessage(ownerConv.id, "#0CCC0001", undefined, { countFailures: false });
+  assert.deepEqual(ok.linked, [{ orderId: own, access: "full" }]);
+  assert.equal(failures(ownerConv.id), 1, "retry never resets the counter either");
+});
+
+test("settings route: turning WhatsApp off cancels queued messages but keeps sending/uncertain rows", async () => {
+  const outbox = loadSource("@/lib/services/whatsapp-outbox");
+  const conv = conversationFor(nextPhone());
+  const at = new Date().toISOString();
+  insertOutbox("kill-q", conv.id, conv.phone, "notify_confirmed", "queued", "a", at);
+  insertOutbox("kill-s", conv.id, conv.phone, "notify_confirmed", "sending", "b", at);
+  insertOutbox("kill-u", conv.id, conv.phone, "notify_confirmed", "uncertain", "c", at);
+  assert.equal(outbox.cancelAllQueued(), 1);
+  const status = (id) => db.prepare("SELECT status, last_error FROM wa_outbox WHERE id = ?").get(id);
+  assert.equal(status("kill-q").status, "cancelled");
+  assert.match(status("kill-q").last_error, /WhatsApp désactivé/);
+  assert.equal(status("kill-s").status, "sending");
+  assert.equal(status("kill-u").status, "uncertain");
+});
+
 test("link-order route: manual order refs with _ or - are accepted and matched exactly", async () => {
   mockUser = ADMIN;
   const manualId = makeOrder("ord_aB_cdEfGhIj", nextPhone());

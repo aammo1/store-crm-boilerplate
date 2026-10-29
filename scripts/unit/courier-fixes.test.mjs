@@ -521,3 +521,30 @@ describe("12. .env.example stays loadable by the simple env loader", () => {
     }
   });
 });
+
+describe("15. submission drain only sends jobs of the active courier", () => {
+  const { drainSubmissions } = loadSource("@/lib/workers/submission");
+
+  test("a queued job created for another courier is left untouched", async () => {
+    resetSubmissions();
+    for (const [id, provider] of [["drain-own", "mock"], ["drain-foreign", "sendit"]]) {
+      createOrder({ id, customerName: "Cliente", customerPhone: "+212612345678", items: [], subtotal: 100, shipping: 0, total: 100 });
+      db.prepare(`INSERT INTO courier_submissions (id, order_id, provider, status, attempts, next_retry_at, created_at, updated_at)
+        VALUES (?, ?, ?, 'queued', 0, ?, ?, ?)`).run(`s-${id}`, id, provider, now, now, now);
+    }
+    const seen = [];
+    await drainSubmissions({
+      name: "mock",
+      capabilities: { deliveryNotes: false, labels: true, labelFormats: [], parcelLookup: false, bulkTracking: false, pickupDistrict: false },
+      isConfigured: () => true,
+      async createParcel(input) {
+        seen.push(input);
+        throw new ProviderError("throttled", "429", { retryAfterSec: 60 });
+      },
+    });
+    assert.equal(seen.length, 1);
+    const foreign = db.prepare("SELECT status, attempts FROM courier_submissions WHERE id = 's-drain-foreign'").get();
+    assert.deepEqual({ ...foreign }, { status: "queued", attempts: 0 });
+    assert.equal(db.prepare("SELECT attempts FROM courier_submissions WHERE id = 's-drain-own'").get().attempts, 1);
+  });
+});

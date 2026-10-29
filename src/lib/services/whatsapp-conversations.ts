@@ -854,11 +854,14 @@ export function logOrderContact(orderId: string, agentId: string | null, note: s
  * - No match / invalid ref -> failure.
  * - Every ref that links nothing is a failed attempt; 3 failed attempts lock identity checks for 24h
  *   (the counter resets only on a message whose refs all linked).
+ * - `countFailures: false` (retry of an event whose first attempt already counted) links as usual
+ *   but leaves the failure counter and the lock untouched.
  */
 export function linkOrdersFromMessage(
   conversationId: string,
   text: string,
   now?: Date,
+  opts: { countFailures?: boolean } = {},
 ): LinkResult {
   const db = getDb();
   const currentDate = now ?? new Date();
@@ -940,6 +943,9 @@ export function linkOrdersFromMessage(
 
     // 4. Every unmatched ref counts as a failed attempt, even when another ref in
     // the same message linked, so a message cannot launder guesses behind its own ref.
+    if (failedRefs > 0 && opts.countFailures === false) {
+      return { linked, failed: true, locked: false, newlyLocked: false };
+    }
     if (failedRefs > 0) {
       const failures = conv.identity_failures + failedRefs;
       if (failures >= 3) {
@@ -965,7 +971,7 @@ export function linkOrdersFromMessage(
     }
 
     // Reset failure counter on a message whose refs all linked
-    if (conv.identity_failures > 0) {
+    if (conv.identity_failures > 0 && opts.countFailures !== false) {
       db.prepare("UPDATE wa_conversations SET identity_failures = 0, updated_at = ? WHERE id = ?").run(
         nowIso,
         conversationId,

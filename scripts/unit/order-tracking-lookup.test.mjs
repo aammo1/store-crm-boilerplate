@@ -78,3 +78,13 @@ test("phone budget: successful lookups never consume it, 8 failures lock it", ()
   assert.equal(routeLookup("BUD00001", PHONE), "limited");
   assert.equal(routeLookup("ZZZZZZZZ", PHONE), "limited");
 });
+
+test("manual orders (ord_ + nanoid) are found by their displayed 8-character ref", () => {
+  make("ord_k3xq9zabcdef");
+  assert.equal(lookupOrderTracking("K3XQ9ZAB", PHONE).status, "received");
+  assert.equal(lookupOrderTracking("ord_k3xq9zabcdef", PHONE).status, "received");
+  assert.equal(lookupOrderTracking("K3XQ9ZAB", "0712345678"), null);
+  assert.equal(lookupOrderTracking("K3XQ_ZAB", PHONE), null, "_ is never a wildcard");
+  make("ZZXQ9ZAB-0000-4000-8000-000000000009");
+  assert.equal(lookupOrderTracking("ZZXQ_ZAB", PHONE), null);
+});

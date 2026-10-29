@@ -497,18 +497,20 @@ export default async function CrmDashboardPage({
           />
         </DashboardCard>
 
-        <DashboardCard
-          title="À remettre au livreur"
-          icon={PackageCheckIcon}
-          href="/crm/expeditions"
-          linkLabel="Ouvrir les expéditions"
-          count={data.awaitingHandoff.count}
-        >
-          <ParcelRows
-            rows={data.awaitingHandoff.rows}
-            emptyLabel="Aucun colis en attente de remise."
-          />
-        </DashboardCard>
+        {hasDeliveryNotes ? (
+          <DashboardCard
+            title="À remettre au livreur"
+            icon={PackageCheckIcon}
+            href="/crm/expeditions"
+            linkLabel="Ouvrir les expéditions"
+            count={data.awaitingHandoff.count}
+          >
+            <ParcelRows
+              rows={data.awaitingHandoff.rows}
+              emptyLabel="Aucun colis en attente de remise."
+            />
+          </DashboardCard>
+        ) : null}
 
         <DashboardCard
           title="En cours de livraison"
