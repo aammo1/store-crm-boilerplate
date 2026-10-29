@@ -1,9 +1,9 @@
 import { courierProfile, deliveryProviderName } from "@/lib/env";
 import type { CourierName } from "./couriers";
-import { ProviderError } from "./errors";
 import { createMockProvider, type MockProvider } from "./mock";
 import { createOzonProvider } from "./ozon";
 import type { DeliveryProvider } from "./provider";
+import { createSenditProvider } from "./sendit";
 
 export function getProvider(): DeliveryProvider {
   const name = deliveryProviderName();
@@ -18,6 +18,6 @@ export function getProvider(): DeliveryProvider {
     g.__crmMockProvider = provider;
     return provider;
   }
-  if (name === "sendit") throw new ProviderError("permanent", "Adaptateur Sendit indisponible"); // replaced in task 08
+  if (name === "sendit") return createSenditProvider();
   return createOzonProvider();
 }

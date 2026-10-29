@@ -32,7 +32,7 @@ const addUser = (id, role, n, active = 1) => db.prepare(
 addUser("admin", "admin", 1);
 addUser("A", "agent", 2); addUser("B", "agent", 3); addUser("C", "agent", 4);
 
-db.prepare("INSERT INTO cities (id, name, updated_at) VALUES (1, 'Casablanca', ?)").run(new Date().toISOString());
+db.prepare("INSERT INTO cities (id, name, updated_at, provider) VALUES (1, 'Casablanca', ?, 'mock')").run(new Date().toISOString());
 const product = createProduct({ name: "Appareil", category: "gadgets", price: 300, images: ["/images/main.webp"] });
 const variantId = product.variants[0].id;
 let phone = 20000000;

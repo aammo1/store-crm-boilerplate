@@ -65,7 +65,7 @@ if (childAction) {
   db.prepare(`INSERT INTO variants (id, product_id, sku, label, options_json, options_key)
     VALUES ('test-main', 'test-product', 'TEST-500', '500 ml', '[{"name":"Contenance","value":"500 ml"}]', '[["contenance","500 ml"]]')`).run();
   openStock("test-main", 1000, actor.id);
-  db.prepare("INSERT INTO cities (id, name, updated_at) VALUES (1, 'Casablanca', ?)").run(now);
+  db.prepare("INSERT INTO cities (id, name, updated_at, provider) VALUES (1, 'Casablanca', ?, 'mock')").run(now);
   db.exec("CREATE TABLE test_courier_calls (kind TEXT, ref TEXT, codes TEXT)");
   let parcelSeq = 0;
   let refSeq = 0;

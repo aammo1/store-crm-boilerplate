@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import { BlocklistManager } from "@/components/crm/blocklist-manager";
 import { CityTariffsManager } from "@/components/crm/city-tariffs-manager";
+import { CourierSettingsForm } from "@/components/crm/courier-settings-form";
 import { StoreSettingsForm } from "@/components/crm/store-settings-form";
 import { requireAdmin } from "@/lib/auth-guards";
+import { courierProfile, deliveryProviderName } from "@/lib/env";
+import { getCourierSettings, listPickupDistricts } from "@/lib/services/courier-settings";
 import { listBlockedPhones } from "@/lib/services/customers";
 import { defaultCourierCost, listCityTariffs } from "@/lib/services/city-tariffs";
 import { getStoreSettings } from "@/lib/services/store-settings";
@@ -16,6 +19,9 @@ export const metadata: Metadata = {
 export default async function SettingsPage() {
   await requireAdmin();
   const settings = getStoreSettings();
+  const isSendit = courierProfile() === "sendit";
+  const courierSettings = isSendit ? getCourierSettings() : null;
+  const pickupDistricts = isSendit ? listPickupDistricts(deliveryProviderName()) : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -28,6 +34,14 @@ export default async function SettingsPage() {
         </p>
       </header>
       <StoreSettingsForm initialSettings={settings} />
+      {isSendit && courierSettings ? (
+        <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
+          <CourierSettingsForm
+            initialSettings={courierSettings}
+            pickupDistricts={pickupDistricts}
+          />
+        </section>
+      ) : null}
       <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
         <h2 className="mb-1 text-lg font-semibold">Numéros bloqués</h2>
         <p className="mb-4 text-sm text-muted-foreground">

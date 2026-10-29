@@ -27,7 +27,7 @@ const IN_LAST = shift(bounds.end, -30);
 const BEFORE = shift(bounds.start, -30);
 const AFTER = shift(bounds.end, 30);
 
-db.prepare("INSERT INTO cities (id, name, updated_at) VALUES (1,'Casablanca',?),(2,'Fès',?),(3,'Taza',?)").run(now, now, now);
+db.prepare("INSERT INTO cities (id, name, updated_at, provider) VALUES (1,'Casablanca',?,'mock'),(2,'Fès',?,'mock'),(3,'Taza',?,'mock')").run(now, now, now);
 db.prepare("INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES ('ag1','a1@x.test','x','Salma','agent',?),('ag2','a2@x.test','x','Omar','agent',?)").run(now, now);
 db.prepare("INSERT INTO city_tariffs (city_id, courier_cost, updated_at) VALUES (1, 30, ?)").run(now);
 setDefaultCourierCost(20);

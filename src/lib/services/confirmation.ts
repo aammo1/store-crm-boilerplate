@@ -13,6 +13,7 @@ import {
 import { getCrmOrder as getOrder, insertContact, type CrmOrder, type ConfirmationStatus } from "@/lib/services/orders";
 import { createSubmission } from "@/lib/services/submissions";
 import { courierPortal } from "@/lib/shipping/courier-copy";
+import { deliveryProviderName } from "@/lib/env";
 
 export class ConfirmationError extends Error {
   readonly status: 400 | 404 | 409;
@@ -133,7 +134,14 @@ export function confirmOrder(
       throw new ConfirmationError(409, "Commande annulée — confirmation impossible.");
     }
     if (order.archivedAt) throw new ConfirmationError(409, "Restaurez la commande avant de la confirmer.");
-    if (!input.address?.trim() || input.address.trim().length > 500 || !Number.isInteger(input.cityId) || input.cityId < 1) {
+    const address = input.address?.trim() ?? "";
+    if (address.length < 5 || address.length > 500) {
+      throw new ConfirmationError(
+        400,
+        "Adresse trop courte — indiquez au moins le quartier et la rue (5 caractères minimum).",
+      );
+    }
+    if (!Number.isInteger(input.cityId) || input.cityId < 1) {
       throw new ConfirmationError(400, "Adresse et ville requises.");
     }
     if (!CONFIRMABLE_STATUSES.includes(order.confirmationStatus)) {
@@ -146,8 +154,9 @@ export function confirmOrder(
       );
     }
 
-    const city = db.prepare("SELECT id, name FROM cities WHERE id = ?").get(
+    const city = db.prepare("SELECT id, name FROM cities WHERE id = ? AND provider = ?").get(
       input.cityId,
+      deliveryProviderName(),
     ) as { id: number; name: string } | undefined;
     if (!city) {
       throw new ConfirmationError(400, "Ville inconnue — lancez la synchronisation des villes.");
@@ -212,7 +221,7 @@ export function confirmOrder(
             city_name = @cityName, items_json = @itemsJson, updated_at = @updatedAt
        WHERE id = @orderId`,
     ).run({
-      address: input.address.trim(),
+      address,
       cityId: city.id,
       cityName: city.name,
       itemsJson: JSON.stringify(finalItems),

@@ -112,6 +112,7 @@ export function getSubmission(id: string): SubmissionRow | null {
 export interface SubmissionFilter {
   status?: SubmissionStatus;
   orderId?: string;
+  provider?: string;
   /**
    * Excludes parcels in a terminal tracking status (delivered/cancelled) that
    * were submitted before this ISO instant. Recent terminal parcels stay polled
@@ -124,20 +125,24 @@ export function listSubmissions(filter: SubmissionFilter = {}): SubmissionRow[] 
   const clauses: string[] = [];
   const params: (string | number)[] = [];
   if (filter.status) {
-    clauses.push("status = ?");
+    clauses.push("cs.status = ?");
     params.push(filter.status);
   }
   if (filter.orderId) {
-    clauses.push("order_id = ?");
+    clauses.push("cs.order_id = ?");
     params.push(filter.orderId);
   }
+  if (filter.provider) {
+    clauses.push("cs.provider = ?");
+    params.push(filter.provider);
+  }
   if (filter.terminalBefore) {
-    clauses.push("NOT (COALESCE(normalized_status, '') IN ('delivered','cancelled') AND created_at < ?)");
+    clauses.push("NOT (COALESCE(cs.normalized_status, '') IN ('delivered','cancelled') AND cs.created_at < ?)");
     params.push(filter.terminalBefore);
   }
   const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const rows = getDb()
-    .prepare(`SELECT * FROM courier_submissions${where} ORDER BY created_at ASC`)
+    .prepare(`SELECT cs.* FROM courier_submissions cs${where} ORDER BY cs.created_at ASC`)
     .all(...params) as SubmissionsTableRow[];
   return rows.map(mapSubmissionRow);
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AuthGuardError, requireUser } from "@/lib/auth-guards";
 import { getDb } from "@/lib/db";
+import { placeholderPdf } from "@/lib/pdf-placeholder";
 import { getProvider } from "@/lib/shipping";
 import { courierPortal } from "@/lib/shipping/courier-copy";
 import { redactText } from "@/lib/shipping/redact";
@@ -13,45 +14,6 @@ const FETCH_TIMEOUT_MS = 20_000;
 
 function json(status: number, body: Record<string, unknown>): NextResponse {
   return NextResponse.json(body, { status });
-}
-
-// --- Placeholder PDF (mock provider only).
-
-function pdfEscape(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-}
-
-/**
- * Minimal single-page PDF so the full BL flow is verifiable with
- * DELIVERY_PROVIDER=mock (the mock exposes a non-HTTP URL and no real bytes).
- * Handwritten object graph with computed xref offsets — no dependency needed.
- */
-function placeholderPdf(ref: string): Uint8Array {
-  const content = [
-    "BT /F1 16 Tf 56 796 Td (Bon de livraison - Mode test) Tj ET",
-    `BT /F1 12 Tf 56 768 Td (Ref : ${pdfEscape(ref)}) Tj ET`,
-    "BT /F1 10 Tf 56 744 Td (Mode test - aucune generation reelle chez le transporteur.) Tj ET",
-  ].join("\n");
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ];
-  let out = "%PDF-1.4\n";
-  const offsets: number[] = [];
-  objects.forEach((body, index) => {
-    offsets.push(out.length);
-    out += `${index + 1} 0 obj\n${body}\nendobj\n`;
-  });
-  const xrefOffset = out.length;
-  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets) {
-    out += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  }
-  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
-  return new TextEncoder().encode(out);
 }
 
 export async function GET(

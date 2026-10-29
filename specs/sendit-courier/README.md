@@ -94,11 +94,11 @@ graph TD
 - [x] [task-07-wizard-courier-choice](./tasks/task-07-wizard-courier-choice.md) — Wizard courier choice and env files
 
 ### Wave 3
-- [ ] [task-08-sendit-adapter](./tasks/task-08-sendit-adapter.md) — Sendit adapter
-- [ ] [task-09-status-maps-tracking](./tasks/task-09-status-maps-tracking.md) — Per-courier status maps and tracking filter
-- [ ] [task-10-expeditions-capabilities](./tasks/task-10-expeditions-capabilities.md) — Expeditions by capability, labels, bulk handoff
-- [ ] [task-11-courier-settings-ui](./tasks/task-11-courier-settings-ui.md) — Sendit settings UI
-- [ ] [task-12-city-search-confirm-guards](./tasks/task-12-city-search-confirm-guards.md) — Arabic/alias city search and confirm guards
+- [x] [task-08-sendit-adapter](./tasks/task-08-sendit-adapter.md) — Sendit adapter
+- [x] [task-09-status-maps-tracking](./tasks/task-09-status-maps-tracking.md) — Per-courier status maps and tracking filter
+- [x] [task-10-expeditions-capabilities](./tasks/task-10-expeditions-capabilities.md) — Expeditions by capability, labels, bulk handoff
+- [x] [task-11-courier-settings-ui](./tasks/task-11-courier-settings-ui.md) — Sendit settings UI
+- [x] [task-12-city-search-confirm-guards](./tasks/task-12-city-search-confirm-guards.md) — Arabic/alias city search and confirm guards
 
 ### Wave 4
 - [ ] [task-13-sendit-parcel-lookup](./tasks/task-13-sendit-parcel-lookup.md) — "Chercher chez Sendit" lookup

@@ -10,6 +10,7 @@ import { getStoreSettings } from "@/lib/services/store-settings";
 import { setAppState } from "@/lib/services/app-state";
 import { pickAssignee } from "@/lib/services/assignment";
 import { orderLineSnapshot, orderRulesKey } from "@/lib/services/order-lines";
+import { deliveryProviderName } from "@/lib/env";
 import {
   type ManualOrderInput,
   MANUAL_ORDER_SOURCE_LABELS,
@@ -186,8 +187,8 @@ export function createManualOrder(
     let cityId: number | null = null;
     if (canonical.cityId !== null) {
       const cityRow = db
-        .prepare("SELECT id, name FROM cities WHERE id = ?")
-        .get(canonical.cityId) as { id: number; name: string } | undefined;
+        .prepare("SELECT id, name FROM cities WHERE id = ? AND provider = ?")
+        .get(canonical.cityId, deliveryProviderName()) as { id: number; name: string } | undefined;
       if (!cityRow) {
         throw new ManualOrderError(
           400,

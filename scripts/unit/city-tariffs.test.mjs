@@ -15,7 +15,7 @@ const t = loadSource("@/lib/services/city-tariffs");
 const db = getDb();
 after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
 const now = new Date().toISOString();
-db.prepare("INSERT INTO cities (id, name, updated_at) VALUES (1, 'Casablanca', ?), (2, 'Laâyoune', ?)").run(now, now);
+db.prepare("INSERT INTO cities (id, name, updated_at, provider) VALUES (1, 'Casablanca', ?, 'mock'), (2, 'Laâyoune', ?, 'mock')").run(now, now);
 db.prepare("INSERT INTO users (id, email, password_hash, name, role, created_at) VALUES ('admin', 'a@x.test', 'x', 'A', 'admin', ?)").run(now);
 
 test("default courier cost round-trips and validates", () => {

@@ -21,6 +21,7 @@ export interface SerializableProduct {
 export interface SerializableCity {
   id: number;
   name: string;
+  arabicName?: string | null;
 }
 
 export interface OrderLineItem {

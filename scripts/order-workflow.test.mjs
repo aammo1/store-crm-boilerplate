@@ -75,7 +75,7 @@ if (childAction) {
   for (const id of ["test-main", "test-upsell", "test-replacement"]) {
     openStock(id, 100, actor.id);
   }
-  db.prepare("INSERT INTO cities (id, name, updated_at) VALUES (1, 'Casablanca', ?)").run(now);
+  db.prepare("INSERT INTO cities (id, name, updated_at, provider) VALUES (1, 'Casablanca', ?, 'mock')").run(now);
 
   function order(id) {
     return orderFixture(db, id, { productId: "test-product", variantId: "test-main",

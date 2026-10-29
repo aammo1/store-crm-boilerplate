@@ -12,9 +12,43 @@ process.env.DELIVERY_PROVIDER = "mock";
 
 const { getDb } = loadSource("@/lib/db");
 const { formatLog, sanitizeLogValue } = loadSource("@/lib/log");
+const { redactText } = loadSource("@/lib/shipping/redact");
 const ws = loadSource("@/lib/services/worker-status");
 const db = getDb();
 after(() => { db.close(); fs.rmSync(tempDir, { recursive: true, force: true }); });
+
+test("Bearer tokens and secret_key JSON values are redacted in free text and logs", () => {
+  const line = formatLog(
+    "error",
+    "request failed",
+    {
+      detail: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature",
+      body: '{"public_key":"pk_live_123","secret_key":"sk_live_456","token":"tok_secret"}',
+      query: "https://app.sendit.ma/api/v1/deliveries?public_key=pk_query&secret_key=sk_query",
+    },
+    "json",
+    "2026-01-01T00:00:00.000Z",
+  );
+  assert.equal(line.includes("eyJhbGciOi"), false);
+  assert.equal(line.includes("pk_live_123"), false);
+  assert.equal(line.includes("sk_live_456"), false);
+  assert.equal(line.includes("tok_secret"), false);
+  assert.equal(line.includes("pk_query"), false);
+  assert.equal(line.includes("sk_query"), false);
+  assert.match(line, /Bearer \*\*\*/);
+  assert.match(JSON.parse(line).body, /"secret_key":\s*"\*\*\*"/);
+  assert.match(line, /public_key=\*\*\*/);
+  assert.match(line, /secret_key=\*\*\*/);
+
+  const raw = 'Bearer test_token_xyz {"secret_key":"my_secret","public_key":"my_public"}';
+  const scrubbed = redactText(raw);
+  assert.equal(scrubbed.includes("test_token_xyz"), false);
+  assert.equal(scrubbed.includes("my_secret"), false);
+  assert.equal(scrubbed.includes("my_public"), false);
+  assert.match(scrubbed, /Bearer \*\*\*/);
+  assert.match(scrubbed, /"secret_key":\s*"\*\*\*"/);
+  assert.match(scrubbed, /"public_key":\s*"\*\*\*"/);
+});
 
 test("json log is one line with denied keys and Ozon URLs redacted", () => {
   const line = formatLog("error", "x\nevil", {

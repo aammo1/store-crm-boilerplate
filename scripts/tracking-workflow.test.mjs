@@ -18,6 +18,7 @@ import { createOrder } from "./fulfillment-fixtures.mjs";
 const { openStock, reserveForOrder, dispatchOrder } = loadSource("@/lib/services/inventory");
 const { pollOnce } = loadSource("@/lib/services/tracking");
 const { STATUS_MAP } = loadSource("@/lib/shipping/status-map");
+const { createMockProvider } = loadSource("@/lib/shipping/mock");
 const db = getDb();
 const now = new Date().toISOString();
 assert.deepEqual(Object.keys(STATUS_MAP), [], "live mappings must stay unverified");
@@ -41,18 +42,22 @@ db.prepare(`INSERT INTO variants (id, product_id, sku, label, options_json, opti
 openStock("v", 50, "test");
 
 let n = 0;
-function submitted(dispatch = true) {
+function submitted(dispatch = true, provider = "mock", customCode = null, confirmed = false) {
   const id = `T${++n}`;
   createOrder({
     id, customerName: "Cliente", customerPhone: "+212612345678",
     items: [{ product_id: "p", variant_id: "v", sku: "v", name: "Sérum test", variant_label: "500 ml", options: [{ name: "Contenance", value: "500 ml" }], quantity: 1, unit_price: 300, line_total: 300 }],
     subtotal: 300, shipping: 29, total: 329,
   });
+  if (confirmed) {
+    db.prepare("UPDATE orders SET confirmation_status = 'confirmed' WHERE id = ?").run(id);
+  }
   reserveForOrder(id, [{ variantId: "v", qty: 1 }], "test", "test");
   if (dispatch) dispatchOrder(id, "test");
-  db.prepare(`INSERT INTO courier_submissions (id, order_id, status, tracking_number, next_retry_at, created_at, updated_at)
-    VALUES (?, ?, 'submitted', ?, ?, ?, ?)`).run(`s${id}`, id, `TRK${id}`, now, now, now);
-  return { sub: `s${id}`, code: `TRK${id}` };
+  const code = customCode ?? `TRK${id}`;
+  db.prepare(`INSERT INTO courier_submissions (id, order_id, provider, status, tracking_number, next_retry_at, created_at, updated_at)
+    VALUES (?, ?, ?, 'submitted', ?, ?, ?, ?)`).run(`s${id}`, id, provider, code, now, now, now);
+  return { sub: `s${id}`, code, orderId: id };
 }
 const poll = (code, rawStatus, date) =>
   pollOnce({ track: async () => [{ trackingNumber: code, rawStatus, raw: date ? { date } : {} }] });
@@ -133,3 +138,83 @@ test("replaying an exact observation is idempotent", async () => {
   assert.equal(events(sub), 1);
   assert.equal(current(sub).s, "delivered");
 });
+
+test("Sendit courier profile normalizes vendor statuses and triggers expected side effects", async () => {
+  process.env.MOCK_COURIER_PROFILE = "sendit";
+  try {
+    const mock = createMockProvider({ profile: "sendit" });
+
+    // DELIVERED → delivered outcome + dispatch recovery (created without dispatch)
+    const deliv = submitted(false, "mock", `SNDMOCK_DEL_${n}`, true);
+    mock.setTrackingStatus(deliv.code, "DELIVERED");
+    await pollOnce(mock);
+    assert.equal(current(deliv.sub).s, "delivered");
+    assert.equal(current(deliv.sub).r, "DELIVERED");
+    assert.equal(
+      db.prepare("SELECT delivery_outcome FROM orders WHERE id = ?").get(deliv.orderId).delivery_outcome,
+      "delivered",
+    );
+    const delivMovements = db
+      .prepare("SELECT kind, ref FROM stock_movements WHERE order_id = ?")
+      .all(deliv.orderId);
+    assert.ok(
+      delivMovements.some((m) => m.kind === "dispatch" || m.ref.startsWith("disp")),
+      "missed dispatch was recovered",
+    );
+
+    // REJECTED → return + refused
+    const rej = submitted(true, "mock", `SNDMOCK_REJ_${n}`, true);
+    mock.setTrackingStatus(rej.code, "REJECTED");
+    await pollOnce(mock);
+    assert.equal(current(rej.sub).s, "refused");
+    assert.equal(current(rej.sub).r, "REJECTED");
+    assert.equal(returns(rej.sub), 1);
+    assert.equal(
+      db.prepare("SELECT delivery_outcome FROM orders WHERE id = ?").get(rej.orderId).delivery_outcome,
+      "refused",
+    );
+
+    // UNREACHABLE → delivery_issue with no outcome
+    const unr = submitted(true, "mock", `SNDMOCK_UNR_${n}`, true);
+    mock.setTrackingStatus(unr.code, "UNREACHABLE");
+    await pollOnce(mock);
+    assert.equal(current(unr.sub).s, "delivery_issue");
+    assert.equal(current(unr.sub).r, "UNREACHABLE");
+    assert.equal(returns(unr.sub), 0);
+    assert.equal(
+      db.prepare("SELECT delivery_outcome FROM orders WHERE id = ?").get(unr.orderId).delivery_outcome,
+      null,
+    );
+
+    // picked_up alias → in_transit
+    const pck = submitted(true, "mock", `SNDMOCK_PCK_${n}`, true);
+    mock.setTrackingStatus(pck.code, "picked_up");
+    await pollOnce(mock);
+    assert.equal(current(pck.sub).s, "in_transit");
+    assert.equal(current(pck.sub).r, "picked_up");
+    assert.equal(returns(pck.sub), 0);
+    assert.equal(
+      db.prepare("SELECT delivery_outcome FROM orders WHERE id = ?").get(pck.orderId).delivery_outcome,
+      null,
+    );
+
+    // unknown code → unknown
+    const unk = submitted(true, "mock", `SNDMOCK_UNK_${n}`, true);
+    mock.setTrackingStatus(unk.code, "NON_EXISTENT_STATUS_CODE");
+    await pollOnce(mock);
+    assert.equal(current(unk.sub).s, "unknown");
+    assert.equal(current(unk.sub).r, "NON_EXISTENT_STATUS_CODE");
+    assert.equal(returns(unk.sub), 0);
+
+    // Submission with different provider (ozon) is not polled when active provider is mock
+    const otherProvider = submitted(true, "ozon", `SNDMOCK_OTH_${n}`, true);
+    mock.setTrackingStatus(otherProvider.code, "DELIVERED");
+    await pollOnce(mock);
+    assert.equal(current(otherProvider.sub).s, null);
+    assert.equal(current(otherProvider.sub).r, null);
+    assert.equal(events(otherProvider.sub), 0);
+  } finally {
+    delete process.env.MOCK_COURIER_PROFILE;
+  }
+});
+

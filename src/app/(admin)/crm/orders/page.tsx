@@ -99,6 +99,8 @@ const TRACKING_FILTER_LABELS: Record<string, string> = {
   in_transit: "En transit",
   out_for_delivery: "En livraison",
   at_facility: "Au dépôt",
+  awaiting_pickup: "En attente de ramassage",
+  delivery_issue: "Colis à problème",
   unknown: "Statut inconnu",
 };
 

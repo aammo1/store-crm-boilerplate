@@ -71,7 +71,7 @@ test("stale in-flight result cannot overwrite a changed submission status", asyn
     VALUES ('p', 'p', 'Chargeur test', 'accessoires', 300, ?, ?)`).run(now, now);
   db.prepare("INSERT INTO variants (id, product_id, sku, label, options_json, options_key) VALUES ('v', 'p', 'v', 'Standard', '[]', '[]')").run();
   openStock("v", 50, "agent-1");
-  db.prepare("INSERT INTO cities (id, name, updated_at) VALUES (1, 'Casablanca', ?)").run(now);
+  db.prepare("INSERT INTO cities (id, name, updated_at, provider) VALUES (1, 'Casablanca', ?, 'mock')").run(now);
   createOrder({ id: "o1", customerName: "Cliente", customerPhone: "+212612345678",
     items: [{ product_id: "p", variant_id: "v", sku: "v", name: "Chargeur test", variant_label: "Standard", options: [], quantity: 1, unit_price: 300, line_total: 300 }],
     upsellOffer: null, subtotal: 300, shipping: 29, total: 329 });

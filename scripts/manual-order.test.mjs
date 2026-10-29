@@ -52,8 +52,8 @@ if (childAction) {
 
   // Seed cities, active product & variants, inactive variant, inactive product
   const now = new Date().toISOString();
-  db.prepare(`INSERT INTO cities (id, name, updated_at) VALUES (1, 'Casablanca', ?)`).run(now);
-  db.prepare(`INSERT INTO cities (id, name, updated_at) VALUES (2, 'Rabat', ?)`).run(now);
+  db.prepare(`INSERT INTO cities (id, name, updated_at, provider) VALUES (1, 'Casablanca', ?, 'mock')`).run(now);
+  db.prepare(`INSERT INTO cities (id, name, updated_at, provider) VALUES (2, 'Rabat', ?, 'mock')`).run(now);
 
   db.prepare(`INSERT INTO products (id, slug, name, category, price, active, created_at, updated_at)
     VALUES ('prod-boots', 'prod-boots', 'Sérum test', 'soins', 350, 1, ?, ?)`).run(now, now);

@@ -35,7 +35,7 @@ for (const [p, price] of [["p", 300], ["other", 150]]) {
     openStock(id, 20, actor.id);
   }
 }
-db.prepare("INSERT INTO cities (id, name, updated_at) VALUES (1, 'Casablanca', ?)").run(now);
+db.prepare("INSERT INTO cities (id, name, updated_at, provider) VALUES (1, 'Casablanca', ?, 'mock')").run(now);
 
 function order(id) {
   orderFixture(db, id, { variantId: "p-38" });

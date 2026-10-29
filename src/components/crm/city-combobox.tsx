@@ -7,13 +7,37 @@ import { cn } from "@/lib/utils";
 export interface CityOption {
   id: number;
   name: string;
+  arabicName?: string | null;
 }
 
 const MAX_RESULTS = 60;
 
-/** Accent/case-insensitive key: "Fès" matches "fes", "Ksar El Kébir" matches "kebir". */
-function searchKey(value: string): string {
-  return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+export const ALIASES: Record<string, string[]> = {
+  casablanca: ["casa", "dar el beida", "darbeida"],
+  tanger: ["tangier", "tanja"],
+  marrakech: ["marrakesh", "kech"],
+  fes: ["fez"],
+  meknes: ["meknas"],
+  agadir: ["agadir"],
+  laayoune: ["layoune", "el aaiun"],
+  "el jadida": ["jadida"],
+  kenitra: ["knitra"],
+  tetouan: ["tetuan", "tetwan"],
+};
+
+export function latinKey(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function arabicKey(v: string): string {
+  return v
+    .replace(/\u0640/g, "") // tatweel
+    .replace(/[\u064B-\u0652\u0670]/g, "") // harakat
+    .replace(/[إأآا]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -46,22 +70,72 @@ export function CityCombobox({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
 
-  const indexed = useMemo(() => cities.map((city) => ({ ...city, key: searchKey(city.name) })), [cities]);
+  const indexed = useMemo(
+    () =>
+      cities.map((city) => {
+        const lKey = latinKey(city.name);
+        const aliases = (ALIASES[lKey] ?? []).map(latinKey);
+        const arKey = city.arabicName ? arabicKey(city.arabicName) : null;
+        return {
+          ...city,
+          latinKey: lKey,
+          aliases,
+          arabicKey: arKey,
+        };
+      }),
+    [cities],
+  );
   const selected = cities.find((city) => String(city.id) === value) ?? null;
 
+  const isArabic = /\p{Script=Arabic}/u.test(query);
+  const hasQuery = isArabic ? Boolean(arabicKey(query)) : Boolean(latinKey(query));
+
   const options = useMemo(() => {
-    const q = searchKey(query);
-    const matches = q
-      ? [
-          ...indexed.filter((city) => city.key.startsWith(q)),
-          ...indexed.filter((city) => !city.key.startsWith(q) && city.key.includes(q)),
-        ]
-      : indexed;
-    const list: Array<{ value: string; label: string }> = matches
+    let matches: typeof indexed;
+    if (isArabic) {
+      const q = arabicKey(query);
+      if (!q) {
+        matches = indexed;
+      } else {
+        const prefix = indexed.filter((city) => city.arabicKey?.startsWith(q));
+        const substring = indexed.filter(
+          (city) =>
+            city.arabicKey &&
+            !city.arabicKey.startsWith(q) &&
+            city.arabicKey.includes(q),
+        );
+        matches = [...prefix, ...substring];
+      }
+    } else {
+      const q = latinKey(query);
+      if (!q) {
+        matches = indexed;
+      } else {
+        const prefix = indexed.filter(
+          (city) =>
+            city.latinKey.startsWith(q) ||
+            city.aliases.some((alias) => alias.startsWith(q)),
+        );
+        const substring = indexed.filter(
+          (city) =>
+            !city.latinKey.startsWith(q) &&
+            !city.aliases.some((alias) => alias.startsWith(q)) &&
+            (city.latinKey.includes(q) ||
+              city.aliases.some((alias) => alias.includes(q))),
+        );
+        matches = [...prefix, ...substring];
+      }
+    }
+
+    const list: Array<{ value: string; label: string; arabicName?: string | null }> = matches
       .slice(0, MAX_RESULTS)
-      .map((city) => ({ value: String(city.id), label: city.name }));
-    return noneLabel && !q ? [{ value: "", label: noneLabel }, ...list] : list;
-  }, [indexed, query, noneLabel]);
+      .map((city) => ({
+        value: String(city.id),
+        label: city.name,
+        arabicName: city.arabicName,
+      }));
+    return noneLabel && !hasQuery ? [{ value: "", label: noneLabel }, ...list] : list;
+  }, [indexed, query, isArabic, hasQuery, noneLabel]);
 
   function choose(next: string) {
     onChange(next);
@@ -149,11 +223,16 @@ export function CityCombobox({
                   option.value === value && "font-semibold",
                 )}
               >
-                {option.label}
+                <span>{option.label}</span>
+                {option.arabicName ? (
+                  <span dir="rtl" className="ml-2 text-xs text-muted-foreground">
+                    {option.arabicName}
+                  </span>
+                ) : null}
               </li>
             ))
           )}
-          {searchKey(query) && options.length === MAX_RESULTS ? (
+          {hasQuery && options.length === MAX_RESULTS ? (
             <li className="px-2 py-1 text-xs text-muted-foreground">Affinez la recherche pour voir plus de villes.</li>
           ) : null}
         </ul>

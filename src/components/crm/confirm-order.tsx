@@ -35,6 +35,7 @@ export interface ConfirmOrderLine {
 export interface ConfirmOrderCity {
   id: number;
   name: string;
+  arabicName?: string | null;
 }
 
 interface VariantOption {

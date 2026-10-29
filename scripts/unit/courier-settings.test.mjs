@@ -261,3 +261,12 @@ test("API route GET and PUT enforcement", async () => {
   assert.equal(validPutBody.settings.senditAllowOpen, false);
   assert.equal(validPutBody.settings.senditAllowTry, true);
 });
+
+test("Settings page only includes Sendit settings when courierProfile is sendit", () => {
+  const { courierProfile } = loadSource("@/lib/env");
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "mock", MOCK_COURIER_PROFILE: "ozon" }), "ozon");
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "ozon" }), "ozon");
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "mock", MOCK_COURIER_PROFILE: "sendit" }), "sendit");
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "sendit" }), "sendit");
+});
+

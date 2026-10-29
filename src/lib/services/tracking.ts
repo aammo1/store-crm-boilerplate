@@ -1,8 +1,9 @@
 import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
-import { courierNumberEnv } from "@/lib/env";
+import { courierNumberEnv, courierProfile, deliveryProviderName } from "@/lib/env";
 import { getCrmOrder as getOrder } from "./orders";
 import { getProvider } from "@/lib/shipping";
+import type { CourierName } from "@/lib/shipping/couriers";
 import { ProviderError } from "@/lib/shipping/errors";
 import type { DeliveryProvider } from "@/lib/shipping/provider";
 import { redactText } from "@/lib/shipping/redact";
@@ -305,7 +306,7 @@ function applySideEffects(
         }
         break;
       default:
-        break; // unknown / in_transit / at_facility / out_for_delivery: stored only.
+        break; // unknown / in_transit / at_facility / out_for_delivery / awaiting_pickup / delivery_issue: stored only.
     }
   } catch (err) {
     console.error(
@@ -316,7 +317,11 @@ function applySideEffects(
 
 // --- Per-result processing (defensive: one bad result never aborts the batch).
 
-function processResult(result: unknown, byCode: Map<string, SubmissionRow[]>): void {
+function processResult(
+  result: unknown,
+  byCode: Map<string, SubmissionRow[]>,
+  courier: CourierName = "ozon",
+): void {
   if (!isRecord(result)) {
     console.warn(
       `[tracking] entrée de suivi illisible, ignorée : ${redactText(rawJsonOf(result) ?? String(result))}`,
@@ -342,7 +347,7 @@ function processResult(result: unknown, byCode: Map<string, SubmissionRow[]>): v
         touchLastSync(submission, now);
         continue;
       }
-      const normalized = normalizeStatus(rawStatus);
+      const normalized = normalizeStatus(rawStatus, courier);
       const applied = persistObservation(
         { submission, rawStatus, normalized, raw: result.raw },
         now,
@@ -367,10 +372,12 @@ function processResult(result: unknown, byCode: Map<string, SubmissionRow[]>): v
 export async function pollOnce(provider?: DeliveryProvider): Promise<void> {
   const p = provider ?? getProvider();
   const pollAt = new Date().toISOString();
+  const profile: CourierName = p.profile ?? courierProfile();
 
   const byCode = new Map<string, SubmissionRow[]>();
   for (const row of listSubmissions({
     status: "submitted",
+    provider: deliveryProviderName(),
     terminalBefore: new Date(Date.now() - TERMINAL_POLL_RETENTION_MS).toISOString(),
   })) {
     const code = row.trackingNumber?.trim();
@@ -398,7 +405,7 @@ export async function pollOnce(provider?: DeliveryProvider): Promise<void> {
       anySuccess = true;
       for (const result of results) {
         try {
-          processResult(result, byCode);
+          processResult(result, byCode, profile);
         } catch (err) {
           console.error(`[tracking] résultat non traité : ${errMessage(err)}`);
         }

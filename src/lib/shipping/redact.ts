@@ -4,18 +4,24 @@
 // an Ozon URL passes through redactUrl()/redactText() first.
 
 const CUSTOMER_PATH_RE = /\/customers\/[^/?#\s]*\/[^/?#\s]*/gi;
-const QUERY_SECRET_RE = /([?&](?:api[_-]?key|apikey|key|token|secret|password|authorization)=)[^&#\s]+/gi;
+const QUERY_SECRET_RE =
+  /([?&](?:api[_-]?key|apikey|key|token|secret|password|authorization|public_key|secret_key)=)[^&#\s]+/gi;
+const BEARER_RE = /(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi;
+const JSON_SECRET_RE = /("(?:public_key|secret_key|token|access_token)"\s*:\s*")[^"]*"/gi;
 
 /** Replaces the credential-bearing /customers/{ID}/{KEY} segments with *** . */
 export function redactUrl(url: unknown): string {
   if (typeof url !== "string") return "[url]";
   return url
     .replace(CUSTOMER_PATH_RE, "/customers/***/***")
-    .replace(QUERY_SECRET_RE, "$1***");
+    .replace(QUERY_SECRET_RE, "$1***")
+    .replace(BEARER_RE, "$1***")
+    .replace(JSON_SECRET_RE, '$1***"');
 }
 
 /** Best-effort scrub for free-form text (error strings, log lines). */
 export function redactText(text: string): string {
+  if (typeof text !== "string") return "";
   return redactUrl(text);
 }
 

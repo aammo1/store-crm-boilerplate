@@ -5,8 +5,19 @@ import {
   dispatchOrder,
   InventoryConflictError,
 } from "@/lib/services/inventory";
+import { courierProfile } from "@/lib/env";
+import { COURIERS } from "@/lib/shipping/couriers";
+import { getProvider } from "@/lib/shipping";
 import { redactText } from "@/lib/shipping/redact";
 export { BlError, createOrResumeBl, blPdfLinks } from "@/lib/services/delivery-notes";
+
+function requiresSavedBl(): boolean {
+  try {
+    return getProvider().capabilities.deliveryNotes;
+  } catch {
+    return COURIERS[courierProfile()].capabilities.deliveryNotes;
+  }
+}
 
 // --- Board view model (serializable — flows into the client component).
 
@@ -115,9 +126,30 @@ function toBoardParcel(row: ParcelSourceRow): BoardParcel {
   };
 }
 
-// --- Section 1: submitted parcels, confirmed orders, not in any BL yet.
+// --- Section 1: submitted parcels, confirmed orders, ready for BL or direct handoff.
 
 function readyParcels(): BoardParcel[] {
+  if (!requiresSavedBl()) {
+    const rows = getDb()
+      .prepare(
+        `SELECT cs.id AS submission_id, cs.tracking_number, o.id AS order_id,
+                o.customer_name, o.city_name, o.total, o.items_json,
+                o.upsell_status, o.upsell_items_json
+         FROM courier_submissions cs
+         JOIN orders o ON o.id = cs.order_id
+         WHERE cs.status = 'submitted'
+           AND cs.tracking_number IS NOT NULL
+           AND o.confirmation_status = 'confirmed'
+           AND NOT EXISTS (
+             SELECT 1 FROM stock_movements m WHERE m.order_id = o.id AND ${DISPATCH_GUARD_SQL}
+           )
+         ORDER BY cs.updated_at ASC, cs.id ASC
+         LIMIT ${READY_LIMIT}`,
+      )
+      .all() as ParcelSourceRow[];
+    return rows.map(toBoardParcel);
+  }
+
   const rows = getDb()
     .prepare(
       `SELECT cs.id AS submission_id, cs.tracking_number, o.id AS order_id,
@@ -405,10 +437,55 @@ export function handoffParcel(parcelId: string, actor: string): HandoffOutcome {
       "Commande non confirmée — remise au livreur impossible.",
     );
   }
-  if (row.status !== "submitted" || !row.tracking_number || !row.saved_bl) {
-    throw new HandoffError(409, "Colis non transmis ou BL non enregistré — résolvez le BL avant la remise au livreur.");
+  if (row.status !== "submitted" || !row.tracking_number || (requiresSavedBl() && !row.saved_bl)) {
+    if (requiresSavedBl()) {
+      throw new HandoffError(
+        409,
+        "Colis non transmis ou BL non enregistré — résolvez le BL avant la remise au livreur.",
+      );
+    }
+    throw new HandoffError(
+      409,
+      "Colis non transmis (pas de numéro de suivi) — remise au livreur impossible.",
+    );
   }
   return { submissionId: row.submission_id, ok: true, ...recordDispatch(row.order_id, actor) };
+}
+
+export function handoffParcels(
+  ids: string[],
+  actor: string,
+): { results: HandoffOutcome[] } {
+  if (requiresSavedBl()) {
+    throw new HandoffError(
+      409,
+      "Remise groupée réservée aux transporteurs sans BL — utilisez la remise par BL.",
+    );
+  }
+  const uniqueIds = Array.from(new Set(ids));
+  const results: HandoffOutcome[] = [];
+  for (const id of uniqueIds) {
+    try {
+      results.push(handoffParcel(id, actor));
+    } catch (err) {
+      const message =
+        err instanceof HandoffError
+          ? err.message
+          : redactText(err instanceof Error ? err.message : String(err));
+      const sub = getDb()
+        .prepare("SELECT order_id FROM courier_submissions WHERE id = ?")
+        .get(id) as { order_id: string } | undefined;
+      results.push({
+        submissionId: id,
+        orderId: sub?.order_id ?? "",
+        ok: false,
+        alreadyDispatched: false,
+        dispatchedAt: null,
+        error: message,
+      });
+    }
+  }
+  return { results };
 }
 
 export function handoffBl(

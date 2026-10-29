@@ -2,6 +2,7 @@ import { TRACKING_STATUSES } from "@/lib/shipping/status-map";
 import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
 import { getBlockedPhone } from "@/lib/services/customers";
+import { deliveryProviderName } from "@/lib/env";
 import type { CommerceOrderItem as OrderItem, CommerceUpsellOffer as UpsellOfferJson, CommerceUpsellStatus as UpsellStatus } from "@/lib/commerce-types";
 
 export const CRM_TIMEZONE = "Africa/Casablanca";
@@ -872,12 +873,13 @@ export function listAgents(): CrmAgent[] {
 export interface CityOption {
   id: number;
   name: string;
+  arabicName?: string | null;
 }
 
 export function listCities(): CityOption[] {
   return getDb()
-    .prepare("SELECT id, name FROM cities ORDER BY name COLLATE NOCASE ASC")
-    .all() as CityOption[];
+    .prepare("SELECT id, name, arabic_name AS arabicName FROM cities WHERE provider = ? ORDER BY name COLLATE NOCASE ASC")
+    .all(deliveryProviderName()) as CityOption[];
 }
 
 export interface CustomerHistoryOrder {

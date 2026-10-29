@@ -59,7 +59,13 @@ interface Note { id: string; ref: string; status: string }
 // request after the adapter's 15s request deadline has long passed.
 const LEASE_MS = 5 * 60_000;
 const nowIso = () => new Date().toISOString();
-const safeText = (text: string) => redactSecrets(redactText(text), [process.env.OZON_CLIENT_ID ?? "", process.env.OZON_API_KEY ?? ""]);
+const safeText = (text: string) =>
+  redactSecrets(redactText(text), [
+    process.env.OZON_CLIENT_ID ?? "",
+    process.env.OZON_API_KEY ?? "",
+    process.env.SENDIT_PUBLIC_KEY ?? "",
+    process.env.SENDIT_SECRET_KEY ?? "",
+  ]);
 function operation(id: string): Operation {
   const row = getDb().prepare("SELECT * FROM bl_operations WHERE id = ?").get(id) as Operation | undefined;
   if (!row) throw new BlError(404, "Opération BL introuvable.");

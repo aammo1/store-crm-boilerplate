@@ -111,7 +111,9 @@ export function readAssistantReturn(id: string, page = 1) {
 // Bound every free-text field, scrub credential-bearing URLs and literal secrets.
 export function sanitizeAssistantData(value: unknown): unknown {
   if (typeof value === "string") return redactSecrets(redactText(value), [
-    process.env.OZON_CLIENT_ID ?? "", process.env.OZON_API_KEY ?? "", process.env.OPENROUTER_API_KEY ?? "",
+    process.env.OZON_CLIENT_ID ?? "", process.env.OZON_API_KEY ?? "",
+    process.env.SENDIT_PUBLIC_KEY ?? "", process.env.SENDIT_SECRET_KEY ?? "",
+    process.env.OPENROUTER_API_KEY ?? "",
     process.env.AUTH_SECRET ?? "", process.env.STOREFRONT_API_KEY ?? "", process.env.CATALOG_AGENT_KEY ?? "",
   ]).slice(0, 600);
   if (Array.isArray(value)) return value.slice(0, 20).map(sanitizeAssistantData);

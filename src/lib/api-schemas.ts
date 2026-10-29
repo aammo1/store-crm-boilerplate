@@ -134,6 +134,10 @@ export const parcelHandoffSchema = z.object({
   parcelId: z.string().trim().min(1).max(64).optional(),
 });
 
+export const parcelsHandoffSchema = z.object({
+  parcelIds: z.array(z.string().trim().min(1).max(64)).min(1).max(100),
+});
+
 // --- CRM retours / stock (task-16)
 
 export { stockBatchSchema } from "./services/inventory-schemas";
