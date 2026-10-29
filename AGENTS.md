@@ -51,6 +51,9 @@ secrets. No shared multi-tenant state or automatic template updates.
 - `src/lib/shipping/`: couriers.ts registry, city-sync.ts, mock/Ozon/Sendit adapters,
   redaction, mapping and submission policy.
 - `src/lib/workers/`: parcel submission, tracking, optional Meta, via instrumentation.
+- `src/lib/whatsapp/`: Evolution client, phone/JID helpers, copy, media, AI (OpenRouter) agent and tools.
+- `src/lib/services/whatsapp-*.ts`: settings, outbox (sole writer of `wa_outbox`), conversations, strikes, drafts/proposals/requests, inbound events, AI usage.
+- `src/lib/workers/whatsapp.ts`: sole sender of WhatsApp messages and sole processor of inbound events.
 - `src/app/(admin)/`: login, `/admin` catalog and `/crm` operations/team/settings.
 - `src/app/api/storefront/v1/`: Bearer-authenticated server integration only.
   This key grants no Auth.js/admin session or catalog-agent access; no browser CORS.
@@ -124,7 +127,7 @@ are env-only. Never put secrets in URLs, logs, browser JSON or props.
   (`scripts/perf-budget.mjs`).
 - Reference code may be read from the zehri and hellobaby repos for porting; never
   read their env/data/DB and never modify them.
-- Never reintroduce Google Sheets or webhook automation.
+- Never reintroduce Google Sheets or webhook automation. Sole exception: the authenticated inbound Evolution WhatsApp webhook at /api/whatsapp/webhook/[secret], which only stores raw events (store-then-process) for the whatsapp worker.
 - No boot-time product/user/order seeds. Local paths `data/crm.db`, `data/uploads`;
   containers persist `/app/data`, nonroot UID/GID 1001. One process owner per DB.
 - Every verification uses `DELIVERY_PROVIDER=mock` (optional `MOCK_COURIER_PROFILE=ozon|sendit`),
@@ -139,6 +142,14 @@ are env-only. Never put secrets in URLs, logs, browser JSON or props.
   1h, one active order binding/browser; lost session cannot safely recreate an
   uncertain checkout with a new key. Memory limiter requires shared replacement
   before distributed/serverless storefront deployment.
+- WhatsApp is optional and inert unless `EVOLUTION_*` env and the `whatsapp_settings.enabled` toggle are set. Every risky sub-feature is OFF by default.
+- The customer writes first. The store never sends an unsolicited first message to a customer without prior human contact (confirmation or `no_answer`×2 relance). Plain text only, no templates.
+- Store-initiated messages respect the sending window, the daily cap and random gaps. AI replies and admin alerts are exempt from the window.
+- An uncertain send becomes `uncertain` and is never retried automatically.
+- The AI never creates, confirms, cancels or prices orders. It writes drafts and proposals that a human applies through existing services (`confirmOrder`, `cancelOrder`, `editOrder`).
+- Order details go only to the matching phone. Other numbers get status only, with ref plus the phone's last 4 digits.
+- Owner courier raw-status mappings feed notifications only and never stock.
+- Never log phone numbers or message bodies. Media retention defaults to 90 days.
 
 ## Ready prompt for a storefront coding agent
 

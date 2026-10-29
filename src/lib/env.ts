@@ -1,4 +1,5 @@
 import { COURIERS, type CourierName } from "./shipping/couriers";
+import { whatsappEnvIssues } from "./whatsapp/config";
 
 /**
  * Fail-fast runtime environment validation (server-only; never import from
@@ -102,6 +103,8 @@ export function validateRuntimeEnv(env: NodeJS.ProcessEnv = process.env): void {
     problems.push("SECURITY_TRUSTED_IP_HEADER manquant (ou SECURITY_ACCEPT_GLOBAL_BUDGETS=1 pour accepter des budgets globaux uniquement)");
   }
 
+  problems.push(...whatsappEnvIssues(env).problems);
+
   if (problems.length) throw new Error(`Configuration invalide : ${problems.join(" ; ")}.`);
 }
 
@@ -109,5 +112,6 @@ export function runtimeEnvWarnings(env: NodeJS.ProcessEnv = process.env): string
   const warnings: string[] = [];
   if (env.NODE_ENV === "production" && env.DELIVERY_PROVIDER === "mock") warnings.push(MOCK_WARNING);
   if (env.SECURITY_ACCEPT_GLOBAL_BUDGETS === "1") warnings.push(GLOBAL_BUDGETS_WARNING);
+  warnings.push(...whatsappEnvIssues(env).warnings);
   return warnings;
 }

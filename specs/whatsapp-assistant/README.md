@@ -137,11 +137,11 @@ graph TD
 ## Task Status
 
 ### Wave 1
-- [ ] [task-01-policy-docs-env](./tasks/task-01-policy-docs-env.md): Policy exception, docs and env examples
-- [ ] [task-02-migration-whatsapp](./tasks/task-02-migration-whatsapp.md): Migration 028 WhatsApp schema
-- [ ] [task-03-whatsapp-config](./tasks/task-03-whatsapp-config.md): WhatsApp env config and boot validation
-- [ ] [task-04-whatsapp-settings](./tasks/task-04-whatsapp-settings.md): WhatsApp settings schema, service and API
-- [ ] [task-05-phone-and-copy](./tasks/task-05-phone-and-copy.md): Phone/JID helpers and message copy
+- [x] [task-01-policy-docs-env](./tasks/task-01-policy-docs-env.md): Policy exception, docs and env examples
+- [x] [task-02-migration-whatsapp](./tasks/task-02-migration-whatsapp.md): Migration 028 WhatsApp schema
+- [x] [task-03-whatsapp-config](./tasks/task-03-whatsapp-config.md): WhatsApp env config and boot validation
+- [x] [task-04-whatsapp-settings](./tasks/task-04-whatsapp-settings.md): WhatsApp settings schema, service and API
+- [x] [task-05-phone-and-copy](./tasks/task-05-phone-and-copy.md): Phone/JID helpers and message copy
 
 ### Wave 2
 - [ ] [task-06-evolution-client](./tasks/task-06-evolution-client.md): Evolution API client

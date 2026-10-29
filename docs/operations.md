@@ -436,6 +436,31 @@ dans l’image) : le préchauffage au démarrage appelle `http://127.0.0.1:${POR
 Un `PORT` différent du port d’écoute laisse `/` et `/boutique` vides jusqu’à la
 revalidation de 300 s.
 
+## WhatsApp (facultatif)
+
+L'assistant client et les notifications WhatsApp via une instance auto-hébergée
+Evolution API v2 sont optionnels et entièrement inertes tant qu'ils ne sont pas
+configurés. Voir le guide complet des opérations dans [docs/whatsapp.md](whatsapp.md).
+
+### Dimensionnement VPS, swap et limites mémoire
+
+Pour héberger sur un même VPS Coolify, le CRM et le service Evolution API (avec
+PostgreSQL et Redis) :
+- **Recommandation VPS** : 4 cœurs / 8 Go de RAM. La consommation stable d'une boutique
+  est d'environ 2 à 2,5 Go de RAM. Les builds Next.js provoquent des pics ponctuels
+  de 1,5 à 2 Go.
+- **Swap (4 Go)** : indispensable pour absorber les builds Next.js sans OOM killer :
+  ```sh
+  fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
+  ```
+- **Limites mémoire conteneurs (Coolify)** :
+  - CRM Next.js : ~1 Go
+  - Evolution API : 768 Mo
+  - PostgreSQL (Evolution) : 512 Mo
+  - Redis (cache Evolution) : 256 Mo
+- Un même serveur Evolution API peut héberger plusieurs instances (une par boutique).
+
 ## Optionnel : Cloudflare
 
 Facultatif, jamais requis : la boutique est déjà rapide sans CDN. À configurer par le
