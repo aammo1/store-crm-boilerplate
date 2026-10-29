@@ -40,4 +40,6 @@ export const ar: Record<keyof typeof fr, string> = {
   trackReceived: "تم استلام الطلب", trackConfirmed: "تم تأكيد الطلب", trackShipped: "تم الشحن",
   trackDelivered: "تم التسليم", trackRefused: "تم رفضه عند التسليم", trackCancelled: "ملغى",
   leadNotice: "بإدخال رقمك، توافق على أن نتصل بك بخصوص طلبك.",
+  confirmOnWhatsapp: "أكّد طلبك عبر واتساب",
+  confirmOnWhatsappHint: "توصل بالتأكيد وتتبع طردك مباشرة على واتساب.",
 };

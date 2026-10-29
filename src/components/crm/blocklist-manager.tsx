@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 export interface BlockedPhoneRow {
@@ -10,6 +11,7 @@ export interface BlockedPhoneRow {
   reason: string;
   createdAt: string;
   createdByName: string | null;
+  source?: "agent" | "system";
 }
 
 export function BlocklistManager({ initialBlocked }: { initialBlocked: BlockedPhoneRow[] }) {
@@ -50,7 +52,12 @@ export function BlocklistManager({ initialBlocked }: { initialBlocked: BlockedPh
       {rows.map((row) => (
         <li key={row.phone} className="flex flex-wrap items-center justify-between gap-2 py-2">
           <div className="min-w-0">
-            <span className="font-mono text-foreground">{row.phone}</span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-foreground">{row.phone}</span>
+              {row.source === "system" && (
+                <Badge variant="secondary">Auto · système</Badge>
+              )}
+            </div>
             <p className="break-words text-muted-foreground">
               {row.reason}
               {row.createdByName ? ` · ${row.createdByName}` : ""}

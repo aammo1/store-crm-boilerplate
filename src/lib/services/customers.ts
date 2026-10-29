@@ -7,6 +7,7 @@ export interface BlockedPhone {
   createdAt: string;
   createdBy: string | null;
   createdByName: string | null;
+  source: "agent" | "system";
 }
 
 export class BlocklistError extends Error {
@@ -23,9 +24,10 @@ interface Row {
   created_at: string;
   created_by: string | null;
   created_by_name: string | null;
+  source: "agent" | "system";
 }
 
-const SELECT = `SELECT bp.phone, bp.reason, bp.created_at, bp.created_by, u.name AS created_by_name
+const SELECT = `SELECT bp.phone, bp.reason, bp.created_at, bp.created_by, bp.source, u.name AS created_by_name
   FROM blocked_phones bp LEFT JOIN users u ON u.id = bp.created_by`;
 
 function map(row: Row): BlockedPhone {
@@ -35,6 +37,7 @@ function map(row: Row): BlockedPhone {
     createdAt: row.created_at,
     createdBy: row.created_by,
     createdByName: row.created_by_name,
+    source: row.source === "system" ? "system" : "agent",
   };
 }
 
@@ -66,9 +69,25 @@ export function blockPhone(
     throw new BlocklistError("Motif requis (500 caractères maximum).", 400);
   }
   const result = getDb()
-    .prepare("INSERT OR IGNORE INTO blocked_phones (phone, reason, created_by, created_at) VALUES (?, ?, ?, ?)")
+    .prepare("INSERT OR IGNORE INTO blocked_phones (phone, reason, created_by, created_at, source) VALUES (?, ?, ?, ?, 'agent')")
     .run(phone, reason, userId, new Date().toISOString());
   return { phone, created: result.changes > 0 };
+}
+
+/** Adds a phone via system automation; source='system' and created_by=NULL. Returns true if created, false if already blocked. */
+export function blockPhoneSystem(rawPhone: string, rawReason: string): boolean {
+  const phone = normalizeMaPhone(rawPhone);
+  if (!phone) throw new BlocklistError("Numéro invalide.", 400);
+  const reason = rawReason.trim();
+  if (reason.length < 1 || reason.length > BLOCK_REASON_MAX) {
+    throw new BlocklistError("Motif requis (500 caractères maximum).", 400);
+  }
+  const result = getDb()
+    .prepare(
+      "INSERT OR IGNORE INTO blocked_phones (phone, reason, created_by, created_at, source) VALUES (?, ?, NULL, ?, 'system')",
+    )
+    .run(phone, reason, new Date().toISOString());
+  return result.changes > 0;
 }
 
 export function unblockPhone(rawPhone: string): boolean {

@@ -144,15 +144,15 @@ graph TD
 - [x] [task-05-phone-and-copy](./tasks/task-05-phone-and-copy.md): Phone/JID helpers and message copy
 
 ### Wave 2
-- [ ] [task-06-evolution-client](./tasks/task-06-evolution-client.md): Evolution API client
-- [ ] [task-07-outbox-service](./tasks/task-07-outbox-service.md): Outbox service with pacing
-- [ ] [task-08-conversations-service](./tasks/task-08-conversations-service.md): Conversations, messages and identity
-- [ ] [task-09-strikes-autoblock](./tasks/task-09-strikes-autoblock.md): Strikes and auto-block
-- [ ] [task-10-webhook-ingest](./tasks/task-10-webhook-ingest.md): Webhook ingest route
-- [ ] [task-11-ai-models-budget](./tasks/task-11-ai-models-budget.md): OpenRouter models, transcription, classifier, budget
-- [ ] [task-12-drafts-proposals-requests](./tasks/task-12-drafts-proposals-requests.md): Drafts, proposals and WhatsApp requests
-- [ ] [task-13-thank-you-button](./tasks/task-13-thank-you-button.md): Thank-you page WhatsApp button
-- [ ] [task-14-settings-ui](./tasks/task-14-settings-ui.md): WhatsApp settings UI
+- [x] [task-06-evolution-client](./tasks/task-06-evolution-client.md): Evolution API client
+- [x] [task-07-outbox-service](./tasks/task-07-outbox-service.md): Outbox service with pacing
+- [x] [task-08-conversations-service](./tasks/task-08-conversations-service.md): Conversations, messages and identity
+- [x] [task-09-strikes-autoblock](./tasks/task-09-strikes-autoblock.md): Strikes and auto-block
+- [x] [task-10-webhook-ingest](./tasks/task-10-webhook-ingest.md): Webhook ingest route
+- [x] [task-11-ai-models-budget](./tasks/task-11-ai-models-budget.md): OpenRouter models, transcription, classifier, budget
+- [x] [task-12-drafts-proposals-requests](./tasks/task-12-drafts-proposals-requests.md): Drafts, proposals and WhatsApp requests
+- [x] [task-13-thank-you-button](./tasks/task-13-thank-you-button.md): Thank-you page WhatsApp button
+- [x] [task-14-settings-ui](./tasks/task-14-settings-ui.md): WhatsApp settings UI
 
 ### Wave 3
 - [ ] [task-15-notification-triggers](./tasks/task-15-notification-triggers.md): Notification triggers

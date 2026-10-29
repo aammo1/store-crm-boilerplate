@@ -38,4 +38,6 @@ export const fr = {
   trackReceived: "Commande reçue", trackConfirmed: "Commande confirmée", trackShipped: "Expédiée",
   trackDelivered: "Livrée", trackRefused: "Refusée à la livraison", trackCancelled: "Annulée",
   leadNotice: "En saisissant votre numéro, vous acceptez d'être rappelé(e) au sujet de votre commande.",
+  confirmOnWhatsapp: "Confirmer ma commande sur WhatsApp",
+  confirmOnWhatsappHint: "Recevez la confirmation et le suivi de votre colis directement sur WhatsApp.",
 } as const;
