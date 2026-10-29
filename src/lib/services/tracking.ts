@@ -8,6 +8,10 @@ import { ProviderError } from "@/lib/shipping/errors";
 import type { DeliveryProvider } from "@/lib/shipping/provider";
 import { redactText } from "@/lib/shipping/redact";
 import { normalizeStatus, type NormalizedTrackingStatus } from "@/lib/shipping/status-map";
+import {
+  maybeNotifyFromRawStatus,
+  recordRawStatus,
+} from "@/lib/services/carrier-status-map";
 import { setDeliveryOutcome } from "@/lib/services/delivery-outcomes";
 import { listMovements, recoverDispatch } from "@/lib/services/inventory";
 import { listSubmissions, type SubmissionRow } from "@/lib/services/submissions";
@@ -348,11 +352,27 @@ function processResult(
         continue;
       }
       const normalized = normalizeStatus(rawStatus, courier);
+      // Owner-maintained carrier mapping: every raw status the poller sees is
+      // recorded per provider so the owner can map it to a notification
+      // category. Telemetry only — must never break the poll or touch stock.
+      try {
+        recordRawStatus(submission.provider, rawStatus);
+      } catch (err) {
+        console.error(
+          `[tracking] enregistrement du statut brut impossible pour ${submission.id} : ${errMessage(err)}`,
+        );
+      }
       const applied = persistObservation(
         { submission, rawStatus, normalized, raw: result.raw },
         now,
       );
-      if (applied) applySideEffects(submission, normalized, rawStatus);
+      if (applied) {
+        applySideEffects(submission, normalized, rawStatus);
+        // Mapped raw statuses may enqueue WhatsApp notifications 3/4; the
+        // helper catches its own failures and never touches stock, delivery
+        // outcomes, returns or normalized statuses.
+        maybeNotifyFromRawStatus(submission.orderId, submission.id, rawStatus, submission.provider);
+      }
     } catch (err) {
       console.error(
         `[tracking] résultat non traité pour ${submission.id} : ${errMessage(err)}`,

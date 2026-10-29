@@ -7,6 +7,7 @@ import { getProvider } from "@/lib/shipping";
 import { buildCreateParcelInput } from "@/lib/shipping/parcel-payload";
 import { redactText } from "@/lib/shipping/redact";
 import { getSubmission, type SubmissionStatus } from "@/lib/services/submissions";
+import { notifyOrderShipped } from "@/lib/whatsapp/notify";
 import { log } from "@/lib/log";
 import { recordWorkerError, recordWorkerTick } from "@/lib/services/worker-status";
 import type { DeliveryProvider } from "@/lib/shipping/provider";
@@ -119,10 +120,16 @@ async function processOne(provider: DeliveryProvider, id: string): Promise<void>
     const input = buildCreateParcelInput(submission, order);
     requestSent = true;
     const result = await provider.createParcel(input);
-    setStatus(id, "submitted", {
-      trackingNumber: result.trackingNumber,
-      rawResponseJson: redactRaw(result.raw),
-    });
+    // Success path only: the status write and the shipped notification commit
+    // together (outbox pattern). notifyOrderShipped guards itself, so it can
+    // never fail the settlement; a late result (settled=false) never notifies.
+    getDb().transaction(() => {
+      const settled = setStatus(id, "submitted", {
+        trackingNumber: result.trackingNumber,
+        rawResponseJson: redactRaw(result.raw),
+      });
+      if (settled) notifyOrderShipped(submission.orderId, result.trackingNumber);
+    })();
   } catch (err) {
     const message = redactText(err instanceof Error ? err.message : String(err));
     try {

@@ -3,6 +3,7 @@ import { ConfirmationError } from "@/lib/services/confirmation";
 import { listMovements, recoverDispatch } from "@/lib/services/inventory";
 import { insertContact } from "@/lib/services/orders";
 import { ensureReturn } from "@/lib/services/returns";
+import { notifyOrderDelivered, onOrderRefused } from "@/lib/whatsapp/notify";
 
 export type DeliveryOutcome = "delivered" | "refused";
 export type DeliveryOutcomeSource = "agent" | "tracking";
@@ -137,6 +138,14 @@ export function setDeliveryOutcome(
           outcome: "note",
           note: `Résultat de livraison modifié : ${OUTCOME_LABELS[existing.outcome]} → ${OUTCOME_LABELS[outcome]}. Motif : ${trimmedReason}`,
         });
+      }
+
+      // Notifications join this transaction (outbox pattern); the hooks guard
+      // themselves and never throw, only successful writes enqueue.
+      if (outcome === "delivered") {
+        notifyOrderDelivered(orderId);
+      } else {
+        onOrderRefused(orderId);
       }
 
       return getDeliveryOutcome(orderId) as DeliveryOutcomeView;

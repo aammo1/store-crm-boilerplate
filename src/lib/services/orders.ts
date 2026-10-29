@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
 import { getBlockedPhone } from "@/lib/services/customers";
 import { deliveryProviderName } from "@/lib/env";
+import { maybeEnqueueNoAnswerRelance } from "@/lib/whatsapp/notify";
 import type { CommerceOrderItem as OrderItem, CommerceUpsellOffer as UpsellOfferJson, CommerceUpsellStatus as UpsellStatus } from "@/lib/commerce-types";
 
 export const CRM_TIMEZONE = "Africa/Casablanca";
@@ -806,6 +807,12 @@ export function insertContact(input: InsertContactInput): ContactEntry | null {
         `UPDATE orders SET confirmation_status = ?, updated_at = ?
          WHERE id = ? AND confirmation_status IN ('new', 'no_answer', 'call_back_later')`,
       ).run(nextStatus, now, input.orderId);
+    }
+
+    // One WhatsApp relance per order at most; joins this transaction (outbox
+    // pattern) and never throws (own savepoint).
+    if (input.outcome === "no_answer") {
+      maybeEnqueueNoAnswerRelance(input.orderId);
     }
 
     const agentName = db

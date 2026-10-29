@@ -155,11 +155,11 @@ graph TD
 - [x] [task-14-settings-ui](./tasks/task-14-settings-ui.md): WhatsApp settings UI
 
 ### Wave 3
-- [ ] [task-15-notification-triggers](./tasks/task-15-notification-triggers.md): Notification triggers
-- [ ] [task-16-media-pipeline](./tasks/task-16-media-pipeline.md): Media pipeline
-- [ ] [task-17-ai-agent](./tasks/task-17-ai-agent.md): AI agent, prompt and core tools
-- [ ] [task-18-inbox-api](./tasks/task-18-inbox-api.md): Inbox API routes
-- [ ] [task-19-courier-status-mapping](./tasks/task-19-courier-status-mapping.md): Courier raw-status mapping
+- [x] [task-15-notification-triggers](./tasks/task-15-notification-triggers.md): Notification triggers
+- [x] [task-16-media-pipeline](./tasks/task-16-media-pipeline.md): Media pipeline
+- [x] [task-17-ai-agent](./tasks/task-17-ai-agent.md): AI agent, prompt and core tools
+- [x] [task-18-inbox-api](./tasks/task-18-inbox-api.md): Inbox API routes
+- [x] [task-19-courier-status-mapping](./tasks/task-19-courier-status-mapping.md): Courier raw-status mapping
 - [x] [task-20-courier-provider-groundwork](./tasks/task-20-courier-provider-groundwork.md): Courier provider groundwork — SUPERSEDED by specs/sendit-courier
 
 ### Wave 4

@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { BlocklistManager } from "@/components/crm/blocklist-manager";
+import { CarrierStatusMapping, type CarrierStatusRowView } from "@/components/crm/carrier-status-mapping";
 import { CityTariffsManager } from "@/components/crm/city-tariffs-manager";
 import { CourierSettingsForm } from "@/components/crm/courier-settings-form";
 import { StoreSettingsForm } from "@/components/crm/store-settings-form";
 import { WhatsAppSettingsForm } from "@/components/crm/whatsapp-settings-form";
 import { requireAdmin } from "@/lib/auth-guards";
 import { courierProfile, deliveryProviderName } from "@/lib/env";
+import { listRawStatuses } from "@/lib/services/carrier-status-map";
 import { getCourierSettings, listPickupDistricts } from "@/lib/services/courier-settings";
 import { listBlockedPhones } from "@/lib/services/customers";
 import { defaultCourierCost, listCityTariffs } from "@/lib/services/city-tariffs";
@@ -19,8 +21,21 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+const seenFormatter = new Intl.DateTimeFormat("fr-FR", {
+  timeZone: "Africa/Casablanca",
+  dateStyle: "short",
+  timeStyle: "short",
+});
+
+function toCarrierStatusView(row: ReturnType<typeof listRawStatuses>[number]): CarrierStatusRowView {
+  return {
+    ...row,
+    lastSeenLabel: seenFormatter.format(new Date(row.lastSeenAt)),
+  };
+}
+
 export default async function SettingsPage() {
-  await requireAdmin();
+  const user = await requireAdmin();
   const settings = getStoreSettings();
   const isSendit = courierProfile() === "sendit";
   const courierSettings = isSendit ? getCourierSettings() : null;
@@ -54,6 +69,17 @@ export default async function SettingsPage() {
             ai: whatsappAiIsConfigured,
           }}
           storeName={settings.storeName}
+        />
+      </section>
+      <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
+        <h2 className="mb-1 text-lg font-semibold">Statuts transporteur (notifications)</h2>
+        <p className="mb-3 text-sm text-muted-foreground">
+          Ces correspondances servent uniquement aux notifications WhatsApp ; elles ne modifient
+          jamais le stock ni les statuts de livraison.
+        </p>
+        <CarrierStatusMapping
+          initialRows={listRawStatuses().map(toCarrierStatusView)}
+          currentUserName={user.name ?? null}
         />
       </section>
       {isSendit && courierSettings ? (

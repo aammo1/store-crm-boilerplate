@@ -12,8 +12,11 @@ import {
 } from "@/lib/services/inventory";
 import { getCrmOrder as getOrder, insertContact, type CrmOrder, type ConfirmationStatus } from "@/lib/services/orders";
 import { createSubmission } from "@/lib/services/submissions";
+import { clearDraft } from "@/lib/services/whatsapp-staging";
+import { notifyOrderCancelled, notifyOrderConfirmed } from "@/lib/whatsapp/notify";
 import { courierPortal } from "@/lib/shipping/courier-copy";
 import { deliveryProviderName } from "@/lib/env";
+import { log } from "@/lib/log";
 
 export class ConfirmationError extends Error {
   readonly status: 400 | 404 | 409;
@@ -244,6 +247,16 @@ export function confirmOrder(
             upsellItems: order.upsellItems ?? [] }), JSON.stringify(after), now);
     }
 
+    // WhatsApp side effects join this transaction (outbox pattern) but must never
+    // break a confirmation: notify guards itself, the draft cleanup is trivial
+    // yet still wrapped so no hook can throw.
+    notifyOrderConfirmed(orderId, actor);
+    try {
+      clearDraft(orderId);
+    } catch (err) {
+      log.error("wa.notify_failed", { label: "clear_draft", error: err });
+    }
+
     const submission = createSubmission(orderId);
     if (!submission) {
       throw new ConfirmationError(
@@ -312,6 +325,10 @@ export function cancelOrder(
       outcome: "note",
       note: `Commande annulée. Motif : ${input.reason}`,
     });
+
+    // Cancels queued notifications, optionally informs the customer and counts
+    // repeated cancellations after confirmation; never throws (own savepoint).
+    notifyOrderCancelled(orderId);
   }).immediate();
 }
 
