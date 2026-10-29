@@ -63,7 +63,7 @@ test("parseMadAmount handles formats and rejects centimes", () => {
   for (const bad of ["12,50", "", "abc", "-5", "1,2,3"]) assert.equal(ok(bad).ok, false, bad);
 });
 
-test("preview matches, flags mismatches, unmatched, invalid and duplicates", () => {
+test("preview matches, flags mismatches, foreign, invalid and duplicates", () => {
   const a = shipped();
   const b = shipped();
   const csv = [
@@ -76,10 +76,66 @@ test("preview matches, flags mismatches, unmatched, invalid and duplicates", () 
   ].join("\n");
   const p = svc.previewStatement(csv);
   assert.deepEqual(p.mapping, { trackingColumn: 0, amountColumn: 1, feeColumn: 2 });
-  assert.deepEqual(p.rows.map((r) => r.status), ["matched", "matched", "unmatched", "duplicate", "invalid"]);
+  assert.deepEqual(p.rows.map((r) => r.status), ["matched", "matched", "foreign", "duplicate", "invalid"]);
+  assert.equal(p.rows[2].message, "Colis inconnu dans cette boutique (autre boutique du même compte ?) — ignoré.");
   const bad = svc.previewStatement(`code,montant\n${a.tracking},100`);
   assert.equal(bad.rows[0].status, "mismatch");
   assert.equal(codStatus(a.id).s, "awaiting_payment");
+});
+
+test("statement mixing known and unknown tracking numbers: known lines import, unknown are reported as foreign and ignored", () => {
+  const a = shipped();
+  const b = shipped();
+  const unknown1 = "TRK_FOREIGN_1";
+  const unknown2 = "TRK_FOREIGN_2";
+  const csv = [
+    "Code suivi;Montant CRBT;Frais",
+    `${a.tracking};300;29`,
+    `${unknown1};250;0`,
+    `${b.tracking};329;0`,
+    `${unknown2};150;15`,
+  ].join("\n");
+
+  const preview = svc.previewStatement(csv);
+  assert.deepEqual(
+    preview.rows.map((r) => ({ tracking: r.trackingNumber, status: r.status })),
+    [
+      { tracking: a.tracking, status: "matched" },
+      { tracking: unknown1, status: "foreign" },
+      { tracking: b.tracking, status: "matched" },
+      { tracking: unknown2, status: "foreign" },
+    ],
+  );
+  assert.equal(
+    preview.rows[1].message,
+    "Colis inconnu dans cette boutique (autre boutique du même compte ?) — ignoré.",
+  );
+  assert.equal(
+    preview.rows[3].message,
+    "Colis inconnu dans cette boutique (autre boutique du même compte ?) — ignoré.",
+  );
+
+  const rows = [
+    { trackingNumber: a.tracking, paidAmount: 300, feeAmount: 29 },
+    { trackingNumber: unknown1, paidAmount: 250, feeAmount: 0 },
+    { trackingNumber: b.tracking, paidAmount: 329, feeAmount: 0 },
+    { trackingNumber: unknown2, paidAmount: 150, feeAmount: 15 },
+  ];
+  const result = svc.commitRemittance({ ...meta, reference: "Relevé Multi-Boutiques", rows }, "admin1");
+
+  assert.equal(result.applied, 2);
+  assert.ok(result.remittance);
+  assert.equal(result.remittance.lineCount, 2);
+  assert.equal(codStatus(a.id).s, "paid");
+  assert.equal(codStatus(b.id).s, "paid");
+
+  assert.equal(result.skipped.length, 2);
+  assert.equal(result.skipped[0].key, unknown1);
+  assert.equal(result.skipped[0].status, "foreign");
+  assert.equal(result.skipped[0].reason, "Colis inconnu dans cette boutique (autre boutique du même compte ?) — ignoré.");
+  assert.equal(result.skipped[1].key, unknown2);
+  assert.equal(result.skipped[1].status, "foreign");
+  assert.equal(result.skipped[1].reason, "Colis inconnu dans cette boutique (autre boutique du même compte ?) — ignoré.");
 });
 
 test("commit marks paid, records fees, and re-import does not double-apply", () => {

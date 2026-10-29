@@ -25,7 +25,7 @@ export interface CsvMapping {
 export type PreviewStatus =
   | "matched"
   | "mismatch"
-  | "unmatched"
+  | "foreign"
   | "invalid"
   | "duplicate"
   | "already_paid"
@@ -121,7 +121,7 @@ function matchTracking(tracking: string): MatchRow | undefined {
 }
 
 function classify(m: MatchRow | undefined, paid: number, fee: number): Pick<PreviewRow, "status" | "orderId" | "expectedAmount" | "message"> {
-  if (!m) return { status: "unmatched", orderId: null, expectedAmount: null, message: "Aucune commande avec ce numéro de suivi." };
+  if (!m) return { status: "foreign", orderId: null, expectedAmount: null, message: "Colis inconnu dans cette boutique (autre boutique du même compte ?) — ignoré." };
   const base = { orderId: m.order_id, expectedAmount: m.total };
   if (m.remitted || m.cod_status === "paid") {
     return { ...base, status: "already_paid", message: "Déjà encaissée." };
@@ -232,6 +232,7 @@ export const commitInputSchema = z.union([
 export interface SkippedLine {
   key: string;
   reason: string;
+  status?: PreviewStatus;
 }
 
 export interface RemittanceSummary {
@@ -291,12 +292,12 @@ interface EligibilityOrder {
  * the two can never drift. Pure: returns a rejection reason or null.
  */
 function rowRejection(
-  c: Pick<Candidate, "paid" | "fee" | "acceptMismatch">,
+  c: Pick<Candidate, "paid" | "fee" | "acceptMismatch"> & { tracking?: string | null },
   order: EligibilityOrder | undefined,
   state: { taken: boolean; remitted: boolean },
   assumeDelivered: boolean,
 ): string | null {
-  if (!order) return "Commande introuvable.";
+  if (!order) return c.tracking ? "Colis inconnu dans cette boutique (autre boutique du même compte ?) — ignoré." : "Commande introuvable.";
   if (state.taken) return "Doublon.";
   if (state.remitted || order.cod_status === "paid") return "Déjà encaissée.";
   const delivered = assumeDelivered ? order.delivery_outcome === null : order.delivery_outcome === "delivered";
@@ -389,7 +390,15 @@ export function commitRemittance(input: unknown, actorId: string | null): Commit
           },
           false,
         );
-        if (reason || !order) { skipped.push({ key: c.key, reason: c.preReason ?? reason ?? "Commande introuvable." }); continue; }
+        if (reason || !order) {
+          const isForeign = !order && !!c.tracking;
+          skipped.push({
+            key: c.key,
+            reason: c.preReason ?? reason ?? (isForeign ? "Colis inconnu dans cette boutique (autre boutique du même compte ?) — ignoré." : "Commande introuvable."),
+            ...(isForeign ? { status: "foreign" as const } : {}),
+          });
+          continue;
+        }
         const paid = c.paid ?? order.total;
         takenOrders.add(order.id);
         applied.push({ orderId: order.id, tracking: order.tracking, expected: order.total, paid, fee: c.fee });

@@ -1,8 +1,10 @@
+import { COURIERS, type CourierName } from "./shipping/couriers";
+
 /**
  * Fail-fast runtime environment validation (server-only; never import from
  * client code). Error messages name variables only, never values.
  */
-export type DeliveryProviderName = "mock" | "ozon";
+export type DeliveryProviderName = "mock" | CourierName; // "mock" | "ozon" | "sendit"
 
 const MOCK_WARNING = "⚠️ Transporteur fictif (mock) actif en production : aucun colis réel ne sera créé.";
 const GLOBAL_BUDGETS_WARNING =
@@ -31,7 +33,30 @@ function blank(value: string | undefined): boolean {
 }
 
 export function deliveryProviderName(env: NodeJS.ProcessEnv = process.env): DeliveryProviderName {
-  return env.DELIVERY_PROVIDER === "mock" ? "mock" : "ozon";
+  if (env.DELIVERY_PROVIDER === "mock") return "mock";
+  if (env.DELIVERY_PROVIDER === "sendit") return "sendit";
+  return "ozon"; // unset or any other value keeps Ozon (AGENTS.md rule)
+}
+
+/** Courier the store behaves like. In mock mode: exact MOCK_COURIER_PROFILE=sendit → sendit, else ozon. */
+export function courierProfile(env: NodeJS.ProcessEnv = process.env): CourierName {
+  const provider = deliveryProviderName(env);
+  if (provider !== "mock") return provider;
+  return env.MOCK_COURIER_PROFILE === "sendit" ? "sendit" : "ozon";
+}
+
+/** Generic courier worker knob with legacy OZON_* fallback. Returns undefined when neither is set/valid. */
+export function courierNumberEnv(
+  suffix: "SUBMIT_INTERVAL_SEC" | "POLL_INTERVAL_MIN" | "TRACK_BATCH",
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  for (const key of [`COURIER_${suffix}`, `OZON_${suffix}`]) {
+    const raw = env[key];
+    if (raw === undefined || raw.trim() === "") continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
 }
 
 export function validateRuntimeEnv(env: NodeJS.ProcessEnv = process.env): void {
@@ -60,11 +85,17 @@ export function validateRuntimeEnv(env: NodeJS.ProcessEnv = process.env): void {
   }
 
   const provider = env.DELIVERY_PROVIDER;
-  if (provider !== "mock" && provider !== "ozon") {
-    problems.push('DELIVERY_PROVIDER doit valoir "mock" ou "ozon"');
-  } else if (provider === "ozon") {
-    if (blank(env.OZON_CLIENT_ID)) problems.push("OZON_CLIENT_ID manquant");
-    if (blank(env.OZON_API_KEY)) problems.push("OZON_API_KEY manquant");
+  if (provider !== "mock" && provider !== "ozon" && provider !== "sendit") {
+    problems.push('DELIVERY_PROVIDER doit valoir "mock", "ozon" ou "sendit"');
+  } else if (provider in COURIERS) {
+    for (const name of COURIERS[provider as CourierName].requiredEnv) {
+      if (blank(env[name])) problems.push(`${name} manquant`);
+    }
+  }
+
+  const mockProfile = env.MOCK_COURIER_PROFILE?.trim();
+  if (mockProfile && mockProfile !== "ozon" && mockProfile !== "sendit") {
+    problems.push('MOCK_COURIER_PROFILE doit valoir "ozon" ou "sendit"');
   }
 
   if (blank(env.SECURITY_TRUSTED_IP_HEADER) && env.SECURITY_ACCEPT_GLOBAL_BUDGETS !== "1") {

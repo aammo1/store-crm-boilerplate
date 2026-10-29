@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
+import { deliveryProviderName } from "@/lib/env";
 import { getCrmOrder } from "@/lib/services/orders";
 import { buildPayloadSnapshot } from "@/lib/shipping/parcel-payload";
 
@@ -25,6 +26,7 @@ export interface SubmissionRow {
   lastSyncAt: string | null;
   createdAt: string;
   updatedAt: string;
+  provider: string;
 }
 
 interface SubmissionsTableRow {
@@ -42,6 +44,7 @@ interface SubmissionsTableRow {
   last_sync_at: string | null;
   created_at: string;
   updated_at: string;
+  provider: string;
 }
 
 function mapSubmissionRow(row: SubmissionsTableRow): SubmissionRow {
@@ -60,6 +63,7 @@ function mapSubmissionRow(row: SubmissionsTableRow): SubmissionRow {
     lastSyncAt: row.last_sync_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    provider: row.provider,
   };
 }
 
@@ -76,9 +80,9 @@ export function createSubmission(orderId: string): SubmissionRow | null {
   const id = `sub_${nanoid(12)}`;
   try {
     db.prepare(
-      `INSERT INTO courier_submissions (id, order_id, status, attempts, next_retry_at, payload_json, created_at, updated_at)
-       VALUES (?, ?, 'queued', 0, ?, ?, ?, ?)`,
-    ).run(id, orderId, now, buildPayloadSnapshot(order), now, now);
+      `INSERT INTO courier_submissions (id, order_id, provider, status, attempts, next_retry_at, payload_json, created_at, updated_at)
+       VALUES (?, ?, ?, 'queued', 0, ?, ?, ?, ?)`,
+    ).run(id, orderId, deliveryProviderName(), now, buildPayloadSnapshot(order), now, now);
   } catch (err) {
     if (isUniqueViolation(err)) return null;
     throw err;

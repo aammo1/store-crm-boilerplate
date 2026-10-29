@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadSource } from "../test-source.mjs";
 
-const { validateRuntimeEnv, runtimeEnvWarnings, deliveryProviderName } = loadSource("@/lib/env");
+const {
+  validateRuntimeEnv,
+  runtimeEnvWarnings,
+  deliveryProviderName,
+  courierProfile,
+  courierNumberEnv,
+} = loadSource("@/lib/env");
+const { COURIERS, COURIER_NAMES, courierDefinition } = loadSource("@/lib/shipping/couriers");
 
 const SECRET = "s3cr3t-value-that-is-definitely-long-enough-123";
 const good = () => ({
@@ -17,6 +24,16 @@ const fails = (env, ...names) => {
   });
 };
 
+test("courier registry exports", () => {
+  assert.deepEqual(COURIER_NAMES, ["ozon", "sendit"]);
+  assert.equal(courierDefinition("ozon").name, "ozon");
+  assert.equal(courierDefinition("sendit").name, "sendit");
+  assert.equal(COURIERS.ozon.capabilities.deliveryNotes, true);
+  assert.equal(COURIERS.sendit.capabilities.deliveryNotes, false);
+  assert.equal(COURIERS.sendit.capabilities.labels, true);
+  assert.equal(COURIERS.sendit.capabilities.pickupDistrict, true);
+});
+
 test("development and build phase are no-ops", () => {
   validateRuntimeEnv({ NODE_ENV: "development" });
   validateRuntimeEnv({});
@@ -28,6 +45,12 @@ test("valid production configs pass", () => {
   const rest = good(); delete rest.SECURITY_ACCEPT_GLOBAL_BUDGETS;
   validateRuntimeEnv({ ...rest, SECURITY_TRUSTED_IP_HEADER: "x-real-ip" });
   validateRuntimeEnv({ ...good(), DELIVERY_PROVIDER: "ozon", OZON_CLIENT_ID: "id", OZON_API_KEY: "key" });
+  validateRuntimeEnv({
+    ...good(),
+    DELIVERY_PROVIDER: "sendit",
+    SENDIT_PUBLIC_KEY: "pub-key",
+    SENDIT_SECRET_KEY: "sec-key",
+  });
 });
 
 test("each missing variable is named", () => {
@@ -54,6 +77,30 @@ test("ozon requires credentials", () => {
   fails({ ...good(), DELIVERY_PROVIDER: "ozon", OZON_CLIENT_ID: "id" }, "OZON_API_KEY");
 });
 
+test("sendit requires credentials and never leaks values", () => {
+  fails({ ...good(), DELIVERY_PROVIDER: "sendit" }, "SENDIT_PUBLIC_KEY", "SENDIT_SECRET_KEY");
+  fails({ ...good(), DELIVERY_PROVIDER: "sendit", SENDIT_PUBLIC_KEY: "pub" }, "SENDIT_SECRET_KEY");
+
+  const env = {
+    ...good(),
+    DELIVERY_PROVIDER: "sendit",
+    SENDIT_PUBLIC_KEY: "leak-sendit-pubkey",
+    SENDIT_SECRET_KEY: "",
+  };
+  assert.throws(() => validateRuntimeEnv(env), (error) => {
+    assert.ok(!error.message.includes("leak-sendit-pubkey"));
+    assert.ok(error.message.includes("SENDIT_SECRET_KEY"));
+    return true;
+  });
+});
+
+test("invalid MOCK_COURIER_PROFILE in production is reported", () => {
+  fails({ ...good(), MOCK_COURIER_PROFILE: "invalid" }, "MOCK_COURIER_PROFILE");
+  fails({ ...good(), MOCK_COURIER_PROFILE: "Sendit" }, "MOCK_COURIER_PROFILE");
+  validateRuntimeEnv({ ...good(), MOCK_COURIER_PROFILE: "ozon" });
+  validateRuntimeEnv({ ...good(), MOCK_COURIER_PROFILE: "sendit" });
+});
+
 test("errors list every problem and never leak values", () => {
   const env = { NODE_ENV: "production", AUTH_SECRET: "tiny-secret", CRM_PUBLIC_URL: "https://leak.example/secret-path",
     DELIVERY_PROVIDER: "ozon", OZON_CLIENT_ID: "", OZON_API_KEY: "" };
@@ -74,5 +121,44 @@ test("warnings and provider helper", () => {
   assert.deepEqual(runtimeEnvWarnings({ NODE_ENV: "development", DELIVERY_PROVIDER: "mock" }), []);
   assert.equal(deliveryProviderName({ DELIVERY_PROVIDER: "mock" }), "mock");
   assert.equal(deliveryProviderName({ DELIVERY_PROVIDER: "Mock" }), "ozon");
+  assert.equal(deliveryProviderName({ DELIVERY_PROVIDER: "sendit" }), "sendit");
+  assert.equal(deliveryProviderName({ DELIVERY_PROVIDER: "Sendit" }), "ozon");
   assert.equal(deliveryProviderName({}), "ozon");
+});
+
+test("courierProfile helper", () => {
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "mock", MOCK_COURIER_PROFILE: "sendit" }), "sendit");
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "mock" }), "ozon");
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "sendit" }), "sendit");
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "ozon" }), "ozon");
+  assert.equal(courierProfile({ DELIVERY_PROVIDER: "sendit", MOCK_COURIER_PROFILE: "ozon" }), "sendit");
+  assert.equal(courierProfile({}), "ozon");
+});
+
+test("courierNumberEnv helper with fallback and priority", () => {
+  assert.equal(courierNumberEnv("POLL_INTERVAL_MIN", { OZON_POLL_INTERVAL_MIN: "30" }), 30);
+  assert.equal(
+    courierNumberEnv("POLL_INTERVAL_MIN", {
+      COURIER_POLL_INTERVAL_MIN: "15",
+      OZON_POLL_INTERVAL_MIN: "30",
+    }),
+    15,
+  );
+  assert.equal(courierNumberEnv("POLL_INTERVAL_MIN", {}), undefined);
+  assert.equal(courierNumberEnv("SUBMIT_INTERVAL_SEC", { COURIER_SUBMIT_INTERVAL_SEC: "10" }), 10);
+  assert.equal(courierNumberEnv("TRACK_BATCH", { OZON_TRACK_BATCH: "50" }), 50);
+  assert.equal(
+    courierNumberEnv("POLL_INTERVAL_MIN", {
+      COURIER_POLL_INTERVAL_MIN: "not-a-number",
+      OZON_POLL_INTERVAL_MIN: "25",
+    }),
+    25,
+  );
+  assert.equal(
+    courierNumberEnv("POLL_INTERVAL_MIN", {
+      COURIER_POLL_INTERVAL_MIN: "   ",
+      OZON_POLL_INTERVAL_MIN: "20",
+    }),
+    20,
+  );
 });

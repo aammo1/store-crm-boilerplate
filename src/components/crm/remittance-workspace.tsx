@@ -30,13 +30,18 @@ const dateTime = new Intl.DateTimeFormat("fr-MA", {
 const STATUS_LABELS: Record<PreviewStatus, string> = {
   matched: "Conforme",
   mismatch: "Écart de montant",
-  unmatched: "Introuvable",
+  foreign: "Autre boutique / inconnu",
   invalid: "Ligne invalide",
   duplicate: "Doublon",
   already_paid: "Déjà encaissée",
   needs_delivery: "Livraison non enregistrée",
   not_deliverable: "Non encaissable",
 };
+
+function formatForeignSummary(count: number): string {
+  const plural = count > 1 ? "s" : "";
+  return `${count} colis inconnu${plural} dans cette boutique ignoré${plural} (autre boutique du même compte ?)`;
+}
 
 const MAX_FILE_BYTES = 900 * 1024;
 
@@ -75,6 +80,7 @@ export function RemittanceWorkspace({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [lastImportSummary, setLastImportSummary] = useState<string | null>(null);
 
   async function refresh() {
     const { ok, data } = await api<{ remittances?: RemittanceSummary[]; aging?: AgingBucket[] }>("/api/crm/remittances");
@@ -90,12 +96,14 @@ export function RemittanceWorkspace({
       toast.error("Fichier trop volumineux (900 Ko maximum).");
       return;
     }
+    setLastImportSummary(null);
     setCsv(await file.text());
     setPreview(null);
   }
 
   async function runPreview(nextMapping: CsvMapping | null = mapping) {
     if (busy || !csv.trim()) return;
+    setLastImportSummary(null);
     setBusy(true);
     try {
       const { ok, data } = await api<{ error?: string; preview?: StatementPreview }>("/api/crm/remittances", {
@@ -121,16 +129,22 @@ export function RemittanceWorkspace({
     }
   }
 
-  function afterCommit(data: CommitResponse) {
+  function afterCommit(data: CommitResponse, foreignCount = 0) {
     if (data.aging) setAging(data.aging);
     const skipped = data.skipped ?? [];
+    const serverForeign = skipped.filter(
+      (s) => s.reason?.includes("inconnu dans cette boutique") || (s as { status?: string }).status === "foreign",
+    ).length;
+    const totalForeign = Math.max(foreignCount, serverForeign);
     if (data.remittance) {
       toast.success(`${data.applied} commande(s) marquée(s) payée(s).${skipped.length ? ` ${skipped.length} ignorée(s).` : ""}`);
       setPreview(null);
       setCsv("");
       setPicked(new Set());
+      setLastImportSummary(totalForeign > 0 ? formatForeignSummary(totalForeign) : null);
     } else {
       toast.error(skipped[0]?.reason ?? "Aucune commande n'a pu être encaissée.");
+      if (totalForeign > 0) setLastImportSummary(formatForeignSummary(totalForeign));
     }
     void refresh();
   }
@@ -157,7 +171,7 @@ export function RemittanceWorkspace({
     return true;
   }
 
-  async function post(body: unknown) {
+  async function post(body: unknown, foreignCount = 0) {
     if (busy) return;
     setBusy(true);
     try {
@@ -170,7 +184,7 @@ export function RemittanceWorkspace({
         toast.error(data?.error ?? "Impossible d'enregistrer l'encaissement.");
         return;
       }
-      afterCommit(data);
+      afterCommit(data, foreignCount);
     } catch {
       toast.error("Erreur de connexion. Veuillez réessayer.");
     } finally {
@@ -180,6 +194,7 @@ export function RemittanceWorkspace({
 
   function commitStatement() {
     if (!preview || !validateMeta()) return;
+    const foreignCount = preview.rows.filter((r) => r.status === "foreign").length;
     const rows = preview.rows
       .filter((r) => {
         const s = selection[r.rowNumber];
@@ -200,7 +215,7 @@ export function RemittanceWorkspace({
       toast.error("Aucune ligne sélectionnée.");
       return;
     }
-    void post({ ...metaPayload(), rows });
+    void post({ ...metaPayload(), rows }, foreignCount);
   }
 
   function commitManual() {
@@ -280,6 +295,11 @@ export function RemittanceWorkspace({
 
       <section className="space-y-3 rounded-xl border border-border bg-card p-4">
         <h2 className="text-base font-semibold text-foreground">Importer un relevé CSV</h2>
+        {lastImportSummary ? (
+          <p className="rounded-md bg-muted/50 p-2.5 text-sm text-muted-foreground">
+            {lastImportSummary}
+          </p>
+        ) : null}
         <div className="space-y-1.5">
           <Label htmlFor="rem-file">Fichier CSV</Label>
           <Input id="rem-file" type="file" accept=".csv,text/csv,text/plain" onChange={(e) => void onFile(e.target.files?.[0])} className={fieldClassName} />
@@ -290,7 +310,7 @@ export function RemittanceWorkspace({
             id="rem-csv"
             rows={5}
             value={csv}
-            onChange={(e) => { setCsv(e.target.value); setPreview(null); }}
+            onChange={(e) => { setCsv(e.target.value); setPreview(null); setLastImportSummary(null); }}
             className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"
           />
         </div>
@@ -330,6 +350,11 @@ export function RemittanceWorkspace({
             <p className="text-xs text-muted-foreground">
               Le montant versé est net des frais : net + frais doit égaler le total de la commande.
             </p>
+            {preview.rows.some((r) => r.status === "foreign") ? (
+              <p className="text-sm text-muted-foreground">
+                {formatForeignSummary(preview.rows.filter((r) => r.status === "foreign").length)}
+              </p>
+            ) : null}
 
             <ul className="space-y-2">
               {preview.rows.map((row) => {
@@ -352,7 +377,13 @@ export function RemittanceWorkspace({
                         {row.paidAmount !== null ? `${formatMad(row.paidAmount)}${row.feeAmount ? ` + frais ${formatMad(row.feeAmount)}` : ""}` : ""}
                         {row.expectedAmount !== null ? ` · attendu ${formatMad(row.expectedAmount)}` : ""}
                       </span>
-                      <span className={row.status === "matched" ? "font-medium text-foreground" : "font-medium text-destructive"}>
+                      <span className={
+                        row.status === "matched"
+                          ? "font-medium text-foreground"
+                          : row.status === "foreign"
+                            ? "font-medium text-muted-foreground"
+                            : "font-medium text-destructive"
+                      }>
                         {STATUS_LABELS[row.status]}
                       </span>
                     </div>
