@@ -33,10 +33,6 @@ export interface ParcelRequest {
   /** Human shipment description (shipmentDescription(items)). */
   description: string;
   items: ParcelItem[];
-  /** Backward-compatible alias for description during migration */
-  nature?: string;
-  /** Backward-compatible alias for codAmountMad during migration */
-  priceMad?: number;
 }
 
 export interface LabelsPdf {
@@ -64,6 +60,13 @@ export interface TrackingResult {
   rawStatus: string | null;
   raw: unknown;
   found: boolean;
+  /**
+   * Set when the courier gave no answer for this code (429 or transient error):
+   * the poller must neither refresh its sync time nor treat it as "no status".
+   * "throttled" also tells the poller to stop the pass (retryAfterSec honoured).
+   */
+  skipped?: "throttled" | "error";
+  retryAfterSec?: number;
 }
 
 export interface DeliveryNoteHandles {

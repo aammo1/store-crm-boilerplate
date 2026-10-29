@@ -12,6 +12,36 @@ export const runtime = "nodejs";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const ID_REGEX = /^[A-Za-z0-9_-]{1,64}$/;
+const MAX_REDIRECTS = 2;
+
+/**
+ * Fetches the courier's PDF URL following at most MAX_REDIRECTS redirects by
+ * hand: every hop must stay on the host the provider returned (and be https,
+ * unless that first URL was http), so a redirect can never reach another host.
+ */
+async function fetchLabelsPdf(firstUrl: string): Promise<Response> {
+  const first = new URL(firstUrl);
+  let current = first;
+  for (let hop = 0; ; hop++) {
+    const response = await fetch(current, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      redirect: "manual",
+    });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get("location");
+    await response.body?.cancel().catch(() => undefined);
+    if (!location || hop >= MAX_REDIRECTS) {
+      throw new Error("Redirections d'étiquettes refusées");
+    }
+    const next = new URL(location, current);
+    const protocolOk =
+      next.protocol === "https:" || (first.protocol === "http:" && next.protocol === "http:");
+    if (!protocolOk || next.host !== first.host) {
+      throw new Error("Redirection d'étiquettes hors de l'hôte autorisé");
+    }
+    current = next;
+  }
+}
 
 function json(status: number, body: Record<string, unknown>, headers?: Record<string, string>): NextResponse {
   return NextResponse.json(body, { status, headers });
@@ -105,7 +135,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         title: "Etiquettes - Mode test",
         lines: [`${codes.length} colis`],
       });
-      return new NextResponse(pdfBytes as unknown as BodyInit, {
+      return new NextResponse(new Uint8Array(pdfBytes), {
         status: 200,
         headers: {
           "Content-Type": "application/pdf",
@@ -118,10 +148,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     let upstream: Response;
     try {
-      upstream = await fetch(result.url, {
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        redirect: "follow",
-      });
+      upstream = await fetchLabelsPdf(result.url);
     } catch (err) {
       console.error(
         `[labels-pdf] transporteur injoignable : ${redactText(err instanceof Error ? err.message : String(err))}`,
@@ -141,14 +168,14 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     const contentType = (upstream.headers.get("content-type") ?? "").toLowerCase();
-    if (contentType !== "" && !contentType.includes("pdf")) {
+    if (!contentType.includes("application/pdf")) {
       const courierLabel = COURIERS[courierProfile()].label;
       return json(502, {
         error: `Étiquettes indisponibles — réessayez ou imprimez-les depuis le portail ${courierLabel}.`,
       });
     }
 
-    return new NextResponse(upstream.body as unknown as BodyInit, {
+    return new NextResponse(upstream.body, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",

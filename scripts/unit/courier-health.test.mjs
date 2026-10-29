@@ -165,6 +165,83 @@ test("getCourierHealth detects zero cities and queued jobs blocked when unconfig
   }
 });
 
+test("mock Sendit without pickup district stays ready but warns with the reason", () => {
+  const origProvider = process.env.DELIVERY_PROVIDER;
+  const origProfile = process.env.MOCK_COURIER_PROFILE;
+  try {
+    process.env.DELIVERY_PROVIDER = "mock";
+    process.env.MOCK_COURIER_PROFILE = "sendit";
+    db.prepare("DELETE FROM app_state WHERE key = 'courier_settings'").run();
+
+    const health = getCourierHealth();
+    assert.equal(health.pickupDistrictSet, false);
+    assert.equal(health.configured, true);
+    assert.deepEqual(health.issues, []);
+    assert.equal(health.warnings.length, 1);
+    assert.match(health.warnings[0], /District de ramassage non choisi/);
+
+    const ozon = (process.env.MOCK_COURIER_PROFILE = "ozon", getCourierHealth());
+    assert.deepEqual(ozon.warnings, []);
+    assert.equal(ozon.pickupDistrictSet, null);
+  } finally {
+    process.env.DELIVERY_PROVIDER = origProvider;
+    if (origProfile !== undefined) process.env.MOCK_COURIER_PROFILE = origProfile;
+    else delete process.env.MOCK_COURIER_PROFILE;
+  }
+});
+
+test("saved pickup district that is no longer a pickup city is reported; valid one is not", () => {
+  const origProvider = process.env.DELIVERY_PROVIDER;
+  const origProfile = process.env.MOCK_COURIER_PROFILE;
+  try {
+    process.env.DELIVERY_PROVIDER = "mock";
+    process.env.MOCK_COURIER_PROFILE = "sendit";
+    setAppState("courier_settings", JSON.stringify({ senditPickupDistrictId: 101, senditAllowOpen: true, senditAllowTry: false }));
+    let health = getCourierHealth();
+    assert.equal(health.pickupDistrictSet, true);
+    assert.deepEqual(health.warnings, []);
+
+    setAppState("courier_settings", JSON.stringify({ senditPickupDistrictId: 102, senditAllowOpen: true, senditAllowTry: false }));
+    health = getCourierHealth();
+    assert.equal(health.pickupDistrictSet, true);
+    assert.equal(health.warnings.length, 1);
+    assert.match(health.warnings[0], /n'est plus un district de ramassage valide/);
+    assert.equal(health.configured, true, "non-blocking: jobs are not held back by this warning");
+  } finally {
+    db.prepare("DELETE FROM app_state WHERE key = 'courier_settings'").run();
+    process.env.DELIVERY_PROVIDER = origProvider;
+    if (origProfile !== undefined) process.env.MOCK_COURIER_PROFILE = origProfile;
+    else delete process.env.MOCK_COURIER_PROFILE;
+  }
+});
+
+test("queuedBlocked ignores an empty city list when the provider itself is configured", () => {
+  const origProvider = process.env.DELIVERY_PROVIDER;
+  const origProfile = process.env.MOCK_COURIER_PROFILE;
+  try {
+    process.env.DELIVERY_PROVIDER = "mock";
+    process.env.MOCK_COURIER_PROFILE = "ozon";
+    db.prepare("INSERT INTO orders (id, customer_name, customer_phone, items_json, subtotal, shipping, total, created_at, updated_at) VALUES ('ord-qb', 'T', '+212612345678', '[]', 1, 0, 1, ?, ?)").run(now, now);
+    db.prepare("INSERT INTO courier_submissions (id, order_id, provider, status, attempts, next_retry_at, created_at, updated_at) VALUES ('sub-qb', 'ord-qb', 'mock', 'queued', 0, ?, ?, ?)").run(now, now, now);
+    db.prepare("UPDATE cities SET provider = 'ozon' WHERE provider = 'mock'").run();
+    try {
+      const health = getCourierHealth();
+      assert.equal(health.citiesCount, 0);
+      assert.ok(health.issues.some((i) => i.includes("Aucune ville synchronisée")));
+      assert.equal(health.configured, false);
+      assert.equal(health.queuedBlocked, 0, "queued jobs are not blocked by missing cities");
+    } finally {
+      db.prepare("UPDATE cities SET provider = 'mock' WHERE id IN (101, 102)").run();
+    }
+  } finally {
+    db.prepare("DELETE FROM courier_submissions WHERE id = 'sub-qb'").run();
+    db.prepare("DELETE FROM orders WHERE id = 'ord-qb'").run();
+    process.env.DELIVERY_PROVIDER = origProvider;
+    if (origProfile !== undefined) process.env.MOCK_COURIER_PROFILE = origProfile;
+    else delete process.env.MOCK_COURIER_PROFILE;
+  }
+});
+
 test("getCourierHealth tracks needs_review, delivery_issue and tracking last sync", () => {
   const syncTime = new Date().toISOString();
   setAppState(TRACKING_LAST_SYNC_KEY, syncTime);

@@ -369,7 +369,7 @@ function buildParcelFields(input: ParcelRequest): Record<string, string> {
   if (!Number.isInteger(input.cityId) || input.cityId <= 0) {
     throw new ProviderError("permanent", "Identifiant de ville invalide");
   }
-  const price = input.codAmountMad ?? input.priceMad ?? 0;
+  const price = input.codAmountMad;
   if (!Number.isInteger(price) || price < 0) {
     throw new ProviderError("permanent", "Prix COD invalide (entier MAD attendu)");
   }
@@ -386,19 +386,16 @@ function buildParcelFields(input: ParcelRequest): Record<string, string> {
     "parcel-city": String(input.cityId),
     "parcel-address": address,
     "parcel-price": String(price),
-    "parcel-nature": input.description ?? input.nature ?? "",
     "parcel-stock": "0",
   };
+  if (input.description) fields["parcel-nature"] = input.description;
   // Custom codes stay OFF by default: semantics unverified (docs/operations.md).
+  // The parcel request carries no custom code, so the flag always fails (unchanged).
   if (process.env.OZON_USE_CUSTOM_TRACKING === "1") {
-    const customCode = input.reference?.trim();
-    if (!customCode) {
-      throw new ProviderError(
-        "permanent",
-        "customTrackingCode requis quand OZON_USE_CUSTOM_TRACKING=1",
-      );
-    }
-    fields["tracking-number"] = customCode;
+    throw new ProviderError(
+      "permanent",
+      "customTrackingCode requis quand OZON_USE_CUSTOM_TRACKING=1",
+    );
   }
   return fields;
 }

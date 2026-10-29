@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { deliveryProviderName } from "@/lib/env";
 import { getAppState, setAppState } from "@/lib/services/app-state";
+import { log } from "@/lib/log";
 import {
   DEFAULT_COURIER_SETTINGS,
   courierSettingsSchema,
@@ -33,15 +34,21 @@ export class CourierSettingsError extends Error {
 
 /**
  * Returns the current courier settings from app_state, or defaults if not yet set.
- * Corrupt JSON or schema mismatches fail closed by throwing.
- * No boot-time writes are made if state is missing.
+ * Corrupt JSON or schema mismatches fall back to defaults (logged) so the
+ * Paramètres page keeps working; defaults leave the pickup district unset, which
+ * keeps Sendit jobs queued. No boot-time writes are made if state is missing.
  */
 export function getCourierSettings(): CourierSettings {
   const value = getAppState(COURIER_SETTINGS_KEY);
   if (value === null) {
     return { ...DEFAULT_COURIER_SETTINGS };
   }
-  return courierSettingsSchema.parse(JSON.parse(value));
+  try {
+    return courierSettingsSchema.parse(JSON.parse(value));
+  } catch (err) {
+    log.error("courier_settings.corrupt", { error: err });
+    return { ...DEFAULT_COURIER_SETTINGS };
+  }
 }
 
 /**
@@ -55,15 +62,20 @@ export function listPickupDistricts(provider: string): Array<{ id: number; name:
 
 /**
  * Validated partial update merged with current settings in an immediate transaction.
- * When senditPickupDistrictId is a number, it must exist in cities with is_pickup = 1
- * for the active delivery provider.
+ * When the update changes senditPickupDistrictId to a number, it must exist in cities
+ * with is_pickup = 1 for the active delivery provider. Saving other fields never
+ * re-validates a district kept as is (it may have vanished after a city sync; the
+ * health card reports it).
  */
 export function updateCourierSettings(input: unknown): CourierSettings {
   const update = courierSettingsUpdateSchema.parse(input);
   return getDb().transaction(() => {
     const current = getCourierSettings();
     const merged = courierSettingsSchema.parse({ ...current, ...update });
-    if (typeof merged.senditPickupDistrictId === "number") {
+    if (
+      typeof merged.senditPickupDistrictId === "number" &&
+      merged.senditPickupDistrictId !== current.senditPickupDistrictId
+    ) {
       const row = getDb()
         .prepare("SELECT 1 FROM cities WHERE id = ? AND provider = ? AND is_pickup = 1")
         .get(merged.senditPickupDistrictId, deliveryProviderName());

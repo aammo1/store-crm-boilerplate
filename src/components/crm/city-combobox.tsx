@@ -29,6 +29,16 @@ export function latinKey(value: string): string {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+/**
+ * Aliases of a city name. Sendit districts look like "Casablanca - Maarif", so
+ * each " - " part (the ville, then the district) is looked up on its own.
+ */
+export function aliasKeysFor(name: string): string[] {
+  const parts = name.split(/\s+[-–]\s+/).map(latinKey).filter(Boolean);
+  const keys = new Set([latinKey(name), ...parts]);
+  return [...keys].flatMap((key) => (ALIASES[key] ?? []).map(latinKey));
+}
+
 export function arabicKey(v: string): string {
   return v
     .replace(/\u0640/g, "") // tatweel
@@ -41,8 +51,9 @@ export function arabicKey(v: string): string {
 }
 
 /**
- * Searchable city picker for the full Ozon list. Typing filters by accent-free
- * prefix first, then substring. `value` is the city id as a string ("" = none).
+ * Searchable city picker for the active courier's cities (Latin, Arabic and alias
+ * search). Typing filters by accent-free prefix first, then substring. `value`
+ * is the city id as a string ("" = none).
  */
 export function CityCombobox({
   id,
@@ -74,7 +85,7 @@ export function CityCombobox({
     () =>
       cities.map((city) => {
         const lKey = latinKey(city.name);
-        const aliases = (ALIASES[lKey] ?? []).map(latinKey);
+        const aliases = aliasKeysFor(city.name);
         const arKey = city.arabicName ? arabicKey(city.arabicName) : null;
         return {
           ...city,

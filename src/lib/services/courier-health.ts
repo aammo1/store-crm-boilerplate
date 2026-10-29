@@ -12,12 +12,13 @@ export interface CourierHealth {
   label: string;
   mode: "live" | "mock";
   configured: boolean;
-  issues: string[]; // French
+  issues: string[]; // French, blocking
+  warnings: string[]; // French, non-blocking (pickup district in mock mode, vanished district)
   citiesCount: number; // cities WHERE provider = deliveryProviderName()
   pickupDistrictSet: boolean | null; // null when capability absent
   lastCitiesSyncAt: string | null; // MAX(updated_at) for provider
   lastTrackingSyncAt: string | null;
-  queuedBlocked: number; // queued jobs when !configured, else 0
+  queuedBlocked: number; // queued jobs the submission worker will not send (provider not configured)
   needsReview: number;
   deliveryIssues: number; // submitted parcels with normalized_status = 'delivery_issue'
 }
@@ -70,20 +71,23 @@ export function getCourierHealth(): CourierHealth {
   const lastTrackingSyncAt = getAppState(TRACKING_LAST_SYNC_KEY);
 
   let pickupDistrictSet: boolean | null = null;
+  let pickupDistrictId: number | null = null;
   const hasPickupDistrictCap =
     provider?.capabilities.pickupDistrict ?? courierDef?.capabilities.pickupDistrict ?? false;
   if (hasPickupDistrictCap) {
     try {
       const settings = getCourierSettings();
-      pickupDistrictSet =
-        typeof settings.senditPickupDistrictId === "number" &&
-        Number.isInteger(settings.senditPickupDistrictId);
+      pickupDistrictId = Number.isInteger(settings.senditPickupDistrictId)
+        ? settings.senditPickupDistrictId
+        : null;
     } catch {
-      pickupDistrictSet = false;
+      pickupDistrictId = null;
     }
+    pickupDistrictSet = pickupDistrictId !== null;
   }
 
   const issues: string[] = [];
+  const warnings: string[] = [];
   let providerConfigured = false;
 
   if (providerError || !provider) {
@@ -108,10 +112,31 @@ export function getCourierHealth(): CourierHealth {
     issues.push("Aucune ville synchronisée — lancez la synchronisation.");
   }
 
+  if (hasPickupDistrictCap) {
+    if (pickupDistrictId === null) {
+      if (mode === "mock") {
+        warnings.push(
+          "District de ramassage non choisi (CRM → Paramètres) — sans effet en mode test, requis avec un vrai transporteur.",
+        );
+      }
+    } else if (citiesCount > 0) {
+      const pickupRow = db
+        .prepare("SELECT 1 FROM cities WHERE id = ? AND provider = ? AND is_pickup = 1")
+        .get(pickupDistrictId, providerName);
+      if (!pickupRow) {
+        warnings.push(
+          "Le district de ramassage enregistré n'est plus un district de ramassage valide — choisissez-en un autre (CRM → Paramètres).",
+        );
+      }
+    }
+  }
+
   const configured = providerConfigured && issues.length === 0;
 
+  // Only the submission worker's gate (provider.isConfigured) leaves jobs queued;
+  // an empty city list does not stop jobs whose city id is already frozen.
   let queuedBlocked = 0;
-  if (!configured) {
+  if (!providerConfigured) {
     const queuedRow = db
       .prepare("SELECT COUNT(*) AS count FROM courier_submissions WHERE status = 'queued'")
       .get() as { count: number } | undefined;
@@ -136,6 +161,7 @@ export function getCourierHealth(): CourierHealth {
     mode,
     configured,
     issues,
+    warnings,
     citiesCount,
     pickupDistrictSet,
     lastCitiesSyncAt,

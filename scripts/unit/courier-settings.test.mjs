@@ -139,20 +139,48 @@ test("valid pickup district is saved and can be reset to null", () => {
   assert.equal(service.getCourierSettings().senditPickupDistrictId, null);
 });
 
-test("corrupt JSON in app_state throws", () => {
-  // Invalid JSON string
-  db.prepare("UPDATE app_state SET value = ? WHERE key = ?").run("{ corrupt", service.COURIER_SETTINGS_KEY);
-  assert.throws(() => service.getCourierSettings());
+test("corrupt JSON or schema mismatch in app_state falls back to defaults instead of throwing", () => {
+  const defaults = { senditPickupDistrictId: null, senditAllowOpen: true, senditAllowTry: false };
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    db.prepare("UPDATE app_state SET value = ? WHERE key = ?").run("{ corrupt", service.COURIER_SETTINGS_KEY);
+    assert.deepEqual(service.getCourierSettings(), defaults);
 
-  // Valid JSON but invalid schema
-  db.prepare("UPDATE app_state SET value = ? WHERE key = ?").run(
-    JSON.stringify({ senditAllowOpen: "not-a-bool" }),
-    service.COURIER_SETTINGS_KEY,
-  );
-  assert.throws(() => service.getCourierSettings());
+    db.prepare("UPDATE app_state SET value = ? WHERE key = ?").run(
+      JSON.stringify({ senditAllowOpen: "not-a-bool" }),
+      service.COURIER_SETTINGS_KEY,
+    );
+    assert.deepEqual(service.getCourierSettings(), defaults);
 
-  // Clean up corrupt state so subsequent tests have clean state
-  db.prepare("DELETE FROM app_state WHERE key = ?").run(service.COURIER_SETTINGS_KEY);
+    // A save over corrupt state repairs it
+    const repaired = service.updateCourierSettings({ senditAllowTry: true });
+    assert.deepEqual(repaired, { ...defaults, senditAllowTry: true });
+    assert.deepEqual(service.getCourierSettings(), repaired);
+  } finally {
+    console.error = originalError;
+    db.prepare("DELETE FROM app_state WHERE key = ?").run(service.COURIER_SETTINGS_KEY);
+  }
+});
+
+test("saving only toggles does not re-validate a saved pickup district that vanished after a city sync", () => {
+  service.updateCourierSettings({ senditPickupDistrictId: 1 });
+  db.prepare("DELETE FROM cities WHERE id = 1").run();
+  try {
+    const updated = service.updateCourierSettings({ senditAllowOpen: false });
+    assert.equal(updated.senditPickupDistrictId, 1);
+    assert.equal(updated.senditAllowOpen, false);
+    // Re-sending the same unchanged id is also accepted
+    assert.equal(service.updateCourierSettings({ senditPickupDistrictId: 1, senditAllowTry: false }).senditPickupDistrictId, 1);
+    // Changing to an unknown district is still validated
+    assert.throws(
+      () => service.updateCourierSettings({ senditPickupDistrictId: 1234 }),
+      (err) => err.status === 400 && err.message.includes("District de ramassage inconnu"),
+    );
+  } finally {
+    db.prepare("INSERT INTO cities (id, name, updated_at, provider, is_pickup) VALUES (1, 'Maârif - Casablanca', ?, 'mock', 1)").run(now);
+    service.updateCourierSettings({ senditPickupDistrictId: null, senditAllowOpen: true, senditAllowTry: false });
+  }
 });
 
 test("API route GET and PUT enforcement", async () => {

@@ -94,56 +94,59 @@ describe("placeholderPdf", () => {
   });
 });
 
-describe("Expeditions & Handoff with Sendit courier profile", () => {
-  let orderSeq = 0;
+let orderSeq = 0;
 
-  function setupOrder(status = "confirmed") {
-    orderSeq += 1;
-    const orderId = `ord_test_${orderSeq}`;
-    const subId = `sub_test_${orderSeq}`;
-    const tracking = `SNDMOCK${String(orderSeq).padStart(4, "0")}`;
+function setupOrder(status = "confirmed") {
+  orderSeq += 1;
+  const orderId = `ord_test_${orderSeq}`;
+  const subId = `sub_test_${orderSeq}`;
+  const tracking = `SNDMOCK${String(orderSeq).padStart(4, "0")}`;
 
-    // Seed variant & stock
-    const variantId = `var_${orderSeq}`;
-    const now = new Date().toISOString();
-    db.prepare(
-      `INSERT OR IGNORE INTO products (id, slug, name, category, price, created_at, updated_at)
-       VALUES (?, ?, ?, 'test', 100, ?, ?)`,
-    ).run(`prod_${orderSeq}`, `prod-${orderSeq}`, `Product ${orderSeq}`, now, now);
+  // Seed variant & stock
+  const variantId = `var_${orderSeq}`;
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT OR IGNORE INTO products (id, slug, name, category, price, created_at, updated_at)
+     VALUES (?, ?, ?, 'test', 100, ?, ?)`,
+  ).run(`prod_${orderSeq}`, `prod-${orderSeq}`, `Product ${orderSeq}`, now, now);
 
-    db.prepare(
-      `INSERT OR IGNORE INTO variants (id, product_id, sku, active)
-       VALUES (?, ?, ?, 1)`,
-    ).run(variantId, `prod_${orderSeq}`, `SKU-${orderSeq}`);
+  db.prepare(
+    `INSERT OR IGNORE INTO variants (id, product_id, sku, active)
+     VALUES (?, ?, ?, 1)`,
+  ).run(variantId, `prod_${orderSeq}`, `SKU-${orderSeq}`);
 
-    openStock(variantId, 50, "test-setup");
+  openStock(variantId, 50, "test-setup");
 
-    // Insert order
-    db.prepare(
-      `INSERT INTO orders (id, customer_name, customer_phone, items_json,
-        upsell_status, subtotal, shipping, total, currency, confirmation_status, created_at, updated_at)
-       VALUES (?, 'Client Test', '0612345678', ?, 'closed', 100, 0, 100, 'MAD', ?, ?, ?)`,
-    ).run(
-      orderId,
-      JSON.stringify([{ variantId, quantity: 1, unitPrice: 100, title: "Item" }]),
-      status,
-      now,
-      now,
-    );
+  // Insert order
+  db.prepare(
+    `INSERT INTO orders (id, customer_name, customer_phone, items_json,
+      upsell_status, subtotal, shipping, total, currency, confirmation_status, created_at, updated_at)
+     VALUES (?, 'Client Test', '0612345678', ?, 'closed', 100, 0, 100, 'MAD', ?, ?, ?)`,
+  ).run(
+    orderId,
+    JSON.stringify([{ variantId, quantity: 1, unitPrice: 100, title: "Item" }]),
+    status,
+    now,
+    now,
+  );
 
-    if (status === "confirmed") {
-      // Create stock reservation
-      reserveForOrder(orderId, [{ variantId, qty: 1 }], "test", "test-source");
-    }
-
-    // Insert courier submission
-    db.prepare(
-      `INSERT INTO courier_submissions (id, order_id, provider, status, attempts, next_retry_at, tracking_number, created_at, updated_at)
-       VALUES (?, ?, 'sendit', 'submitted', 1, ?, ?, ?, ?)`,
-    ).run(subId, orderId, now, tracking, now, now);
-
-    return { orderId, subId, tracking, variantId };
+  if (status === "confirmed") {
+    // Create stock reservation
+    reserveForOrder(orderId, [{ variantId, qty: 1 }], "test", "test-source");
   }
+
+  // Insert courier submission
+  db.prepare(
+    `INSERT INTO courier_submissions (id, order_id, provider, status, attempts, next_retry_at, tracking_number, created_at, updated_at)
+     VALUES (?, ?, 'sendit', 'submitted', 1, ?, ?, ?, ?)`,
+  ).run(subId, orderId, now, tracking, now, now);
+
+  return { orderId, subId, tracking, variantId };
+}
+
+const setupLabelOrder = setupOrder;
+
+describe("Expeditions & Handoff with Sendit courier profile", () => {
 
   test("readyParcels shows submitted parcels without requiring BL when deliveryNotes is false", () => {
     process.env.MOCK_COURIER_PROFILE = "sendit";
@@ -377,5 +380,92 @@ describe("Expeditions & Handoff with Sendit courier profile", () => {
     );
     assert.equal(partial.status, 200);
     assert.equal(partial.headers.get("X-Labels-Skipped"), "1");
+  });
+});
+
+describe("Labels route fetches the courier PDF safely", () => {
+  const originalFetch = globalThis.fetch;
+  const pdf = () => new Response("%PDF-1.4 fake", { status: 200, headers: { "content-type": "application/pdf" } });
+  let calls;
+  let responder;
+
+  function installProvider(url) {
+    const { getProvider } = loadSource("@/lib/shipping");
+    process.env.MOCK_COURIER_PROFILE = "sendit";
+    const provider = getProvider();
+    globalThis.__crmMockProviders.sendit = {
+      ...provider,
+      capabilities: provider.capabilities,
+      getLabelsPdf: async () => ({ url }),
+    };
+  }
+
+  async function request(sub) {
+    mockUser = { id: "user_1", email: "agent@example.test", role: "agent" };
+    return labelsRoute.GET(new Request(`https://crm.example.test/api/crm/labels/pdf?ids=${sub}&format=10x10`));
+  }
+
+  function stubFetch(handler) {
+    calls = [];
+    responder = handler;
+    globalThis.fetch = async (input, init) => {
+      const url = String(input instanceof URL ? input.href : input);
+      calls.push({ url, redirect: init?.redirect });
+      return responder(url, calls.length);
+    };
+  }
+
+  const redirect = (location, status = 302) => new Response(null, { status, headers: { location } });
+
+  after(() => {
+    globalThis.fetch = originalFetch;
+    delete globalThis.__crmMockProviders.sendit;
+  });
+
+  test("direct https PDF streams through with redirect:'manual'", async () => {
+    const { subId } = setupLabelOrder();
+    installProvider("https://app.sendit.ma/storage/l.pdf");
+    stubFetch(() => pdf());
+    const res = await request(subId);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("Content-Type"), "application/pdf");
+    assert.equal(await res.text(), "%PDF-1.4 fake");
+    assert.deepEqual(calls.map((c) => c.redirect), ["manual"]);
+  });
+
+  test("same-host https redirect is followed (re-validated)", async () => {
+    const { subId } = setupLabelOrder();
+    installProvider("https://app.sendit.ma/storage/first.pdf");
+    stubFetch((url) => (url.endsWith("first.pdf") ? redirect("/storage/second.pdf") : pdf()));
+    const res = await request(subId);
+    assert.equal(res.status, 200);
+    assert.deepEqual(calls.map((c) => c.url), ["https://app.sendit.ma/storage/first.pdf", "https://app.sendit.ma/storage/second.pdf"]);
+  });
+
+  test("redirect to another host, to http, or beyond two hops is refused with 502", async () => {
+    installProvider("https://app.sendit.ma/storage/l.pdf");
+    for (const location of ["https://evil.example/x.pdf", "http://app.sendit.ma/x.pdf", "https://169.254.169.254/latest"]) {
+      const { subId } = setupLabelOrder();
+      stubFetch(() => redirect(location));
+      const res = await request(subId);
+      assert.equal(res.status, 502, location);
+      assert.equal(calls.length, 1, "the foreign location is never requested");
+    }
+    const { subId } = setupLabelOrder();
+    stubFetch((url, n) => redirect(`/storage/hop${n}.pdf`));
+    assert.equal((await request(subId)).status, 502);
+    assert.equal(calls.length, 3);
+  });
+
+  test("missing or non-PDF content-type is refused with 502", async () => {
+    installProvider("https://app.sendit.ma/storage/l.pdf");
+    for (const headers of [{}, { "content-type": "text/html" }, { "content-type": "application/octet-stream" }]) {
+      const { subId } = setupLabelOrder();
+      stubFetch(() => new Response("<html>login</html>", { status: 200, headers }));
+      assert.equal((await request(subId)).status, 502, JSON.stringify(headers));
+    }
+    const { subId } = setupLabelOrder();
+    stubFetch(() => new Response("%PDF", { status: 200, headers: { "content-type": "Application/PDF; charset=binary" } }));
+    assert.equal((await request(subId)).status, 200);
   });
 });

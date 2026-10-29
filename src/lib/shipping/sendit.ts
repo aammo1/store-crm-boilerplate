@@ -36,9 +36,11 @@ interface CachedToken {
 }
 
 let cachedToken: CachedToken | null = null;
+let pendingLogin: { account: string; promise: Promise<string> } | null = null;
 
 export function __resetSenditTokenCache(): void {
   cachedToken = null;
+  pendingLogin = null;
 }
 
 export interface SenditProviderDeps {
@@ -115,11 +117,11 @@ function formatErrorMessage(
     full = `Échec (HTTP ${status})`;
   }
 
-  full = full.replace(/<[^>]*>/g, "");
+  full = redactSecrets(redactText(full.replace(/<[^>]*>/g, "")), secrets);
   if (full.length > 500) {
     full = `${full.slice(0, 499)}…`;
   }
-  return redactSecrets(redactText(full), secrets);
+  return full;
 }
 
 function redactRaw(body: unknown, secrets: string[]): unknown {
@@ -133,11 +135,11 @@ function redactRaw(body: unknown, secrets: string[]): unknown {
   }
 }
 
-function pickLastPage(body: Record<string, unknown>): number {
+function pickLastPage(body: Record<string, unknown>): number | null {
   if (typeof body.last_page === "number") return body.last_page;
   if (isRecord(body.meta) && typeof body.meta.last_page === "number") return body.meta.last_page;
   if (isRecord(body.data) && typeof body.data.last_page === "number") return body.data.last_page;
-  return 1;
+  return null;
 }
 
 function extractRows(body: Record<string, unknown>): Record<string, unknown>[] {
@@ -212,6 +214,21 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
       return { token: cachedToken.token, wasCached: true };
     }
 
+    // Concurrent callers (tracking runs 3 at once) share one login request.
+    if (pendingLogin && pendingLogin.account === account) {
+      return { token: await pendingLogin.promise, wasCached: false };
+    }
+    const promise = performLogin(publicKey, secretKey, account);
+    const entry = { account, promise };
+    pendingLogin = entry;
+    try {
+      return { token: await promise, wasCached: false };
+    } finally {
+      if (pendingLogin === entry) pendingLogin = null;
+    }
+  }
+
+  async function performLogin(publicKey: string, secretKey: string, account: string): Promise<string> {
     const baseUrl = getBaseUrl();
     const fetchFn = getFetch();
     const secrets = [publicKey, secretKey];
@@ -281,7 +298,7 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
       expiresAt: Date.now() + 55 * 60 * 1000,
     };
 
-    return { token: trimmedToken, wasCached: false };
+    return trimmedToken;
   }
 
   async function requestWithAuth(
@@ -291,6 +308,8 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
       json?: unknown;
       timeoutMs?: number;
       uncertainOnThrow?: boolean;
+      /** Login failures happen before the request leaves: nothing can have been created. */
+      requeueOnLoginFailure?: boolean;
     } = {},
   ): Promise<{ res: Response; text: string; body: unknown; secrets: string[] }> {
     const env = getEnv();
@@ -299,7 +318,25 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
     const publicKey = env.SENDIT_PUBLIC_KEY?.trim() ?? "";
     const secretKey = env.SENDIT_SECRET_KEY?.trim() ?? "";
 
-    let auth = await login(false);
+    const authenticate = async (forceFresh: boolean) => {
+      try {
+        return await login(forceFresh);
+      } catch (err) {
+        if (
+          options.requeueOnLoginFailure &&
+          err instanceof ProviderError &&
+          err.kind !== "permanent" &&
+          err.kind !== "throttled"
+        ) {
+          throw new ProviderError("throttled", `${err.message} — rien n'a été envoyé`, {
+            cause: err,
+          });
+        }
+        throw err;
+      }
+    };
+
+    let auth = await authenticate(false);
     let secrets = [publicKey, secretKey, auth.token].filter(Boolean);
 
     const url = endpoint.startsWith("http") ? endpoint : `${baseUrl}${endpoint}`;
@@ -339,7 +376,7 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
 
     if ((res.status === 401 || res.status === 403) && auth.wasCached) {
       cachedToken = null;
-      auth = await login(true);
+      auth = await authenticate(true);
       secrets = [publicKey, secretKey, auth.token].filter(Boolean);
       headers.Authorization = `Bearer ${auth.token}`;
       try {
@@ -449,14 +486,12 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
         let items: unknown[] = [];
         if (Array.isArray(body.data)) {
           items = body.data;
-        } else if (Array.isArray(body)) {
-          items = body;
         } else if (isRecord(body.data)) {
           items = Object.values(body.data);
         }
 
-        lastPage = pickLastPage(body);
-        if (!Number.isInteger(lastPage) || lastPage < 1) lastPage = 1;
+        const reported = pickLastPage(body);
+        lastPage = reported !== null && Number.isInteger(reported) && reported >= 1 ? reported : 1;
 
         for (const row of items) {
           if (!isRecord(row)) continue;
@@ -540,7 +575,7 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
         throw new ProviderError("permanent", "Identifiant de district Sendit invalide");
       }
 
-      const amount = input.codAmountMad ?? input.priceMad;
+      const amount = input.codAmountMad;
       if (amount === undefined || !Number.isInteger(amount) || amount < 0) {
         throw new ProviderError("permanent", "Montant COD invalide pour Sendit");
       }
@@ -565,7 +600,7 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
         comment: `Commande ${input.reference}`,
         allow_open: settings.senditAllowOpen ? 1 : 0,
         allow_try: settings.senditAllowTry ? 1 : 0,
-        products: productsString(input.items, input.description ?? input.nature ?? ""),
+        products: productsString(input.items, input.description ?? ""),
       };
 
       const { res, text, body, secrets } = await requestWithAuth("/deliveries", {
@@ -573,6 +608,7 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
         json: payload,
         timeoutMs: 15_000,
         uncertainOnThrow: true,
+        requeueOnLoginFailure: true,
       });
 
       if (res.status === 429) {
@@ -647,74 +683,118 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
       if (trackingNumbers.length === 0) return [];
 
       const results: TrackingResult[] = new Array(trackingNumbers.length);
-      let stopBatch429 = false;
-      let logged429 = false;
-      let first429Index = Number.POSITIVE_INFINITY;
+      const state: {
+        answered: number;
+        failures: number;
+        firstError: ProviderError | null;
+        throttle: { retryAfterSec?: number } | null;
+        fatal: ProviderError | null;
+      } = { answered: 0, failures: 0, firstError: null, throttle: null, fatal: null };
+
+      const skip = (index: number, skipped: "throttled" | "error"): void => {
+        results[index] = {
+          trackingNumber: trackingNumbers[index],
+          rawStatus: null,
+          raw: null,
+          found: true,
+          skipped,
+          ...(skipped === "throttled" && state.throttle?.retryAfterSec !== undefined
+            ? { retryAfterSec: state.throttle.retryAfterSec }
+            : {}),
+        };
+      };
+      const stopped = (): boolean =>
+        state.throttle !== null ||
+        state.fatal !== null ||
+        (state.answered === 0 && state.failures >= 3);
+      const onThrottle = (retryAfterSec: number | undefined, error: ProviderError): void => {
+        if (state.throttle === null) {
+          state.throttle = { retryAfterSec };
+          console.warn("[sendit] Suivi limité par débit (HTTP 429), sondage interrompu");
+        }
+        state.firstError ??= error;
+      };
 
       const trackOne = async (index: number): Promise<void> => {
+        if (stopped()) {
+          skip(index, state.throttle !== null ? "throttled" : "error");
+          return;
+        }
         const code = trackingNumbers[index];
-        if (stopBatch429) {
-          results[index] = { trackingNumber: code, rawStatus: null, raw: null, found: true };
+
+        let outcome: Awaited<ReturnType<typeof requestWithAuth>>;
+        try {
+          outcome = await requestWithAuth(`/deliveries/${encodeURIComponent(code)}`, {
+            method: "GET",
+            timeoutMs: 15_000,
+          });
+        } catch (err) {
+          const error =
+            err instanceof ProviderError
+              ? err
+              : new ProviderError("retryable", "Suivi Sendit impossible", { cause: err });
+          if (error.kind === "permanent") {
+            // Keys refused / not configured: every other call would fail the same way.
+            state.fatal ??= error;
+          } else if (error.kind === "throttled") {
+            onThrottle(error.retryAfterSec, error);
+          } else {
+            state.failures++;
+            state.firstError ??= error;
+          }
+          skip(index, error.kind === "throttled" ? "throttled" : "error");
           return;
         }
 
-        try {
-          const { res, body, secrets } = await requestWithAuth(
-            `/deliveries/${encodeURIComponent(code)}`,
-            { method: "GET", timeoutMs: 15_000 },
+        const { res, body, text, secrets } = outcome;
+        if (res.status === 429) {
+          const retryAfterSec = Number(res.headers.get("Retry-After")) || undefined;
+          onThrottle(
+            retryAfterSec,
+            new ProviderError("throttled", formatErrorMessage(429, body, text, secrets), {
+              retryAfterSec,
+            }),
           );
-
-          if (res.status === 429) {
-            stopBatch429 = true;
-            first429Index = Math.min(first429Index, index);
-            if (!logged429) {
-              logged429 = true;
-              console.warn("[sendit] Suivi limité par débit (HTTP 429), lot interrompu");
-            }
-            results[index] = { trackingNumber: code, rawStatus: null, raw: null, found: true };
-            return;
-          }
-
-          if (res.status === 404) {
-            results[index] = { trackingNumber: code, rawStatus: null, raw: null, found: false };
-            return;
-          }
-
-          if (!res.ok) {
-            results[index] = { trackingNumber: code, rawStatus: null, raw: null, found: true };
-            return;
-          }
-
-          const d = isRecord(body) && isRecord(body.data) ? body.data : body;
-          let rawStatus: string | null = null;
-          if (isRecord(d)) {
-            if (typeof d.status === "string") {
-              rawStatus = d.status.toUpperCase().trim();
-            } else if (isRecord(d.status) && typeof d.status.code === "string") {
-              rawStatus = d.status.code.toUpperCase().trim();
-            } else if (typeof d.status_code === "string") {
-              rawStatus = d.status_code.toUpperCase().trim();
-            }
-          }
-          if (!rawStatus) rawStatus = null;
-
-          results[index] = {
-            trackingNumber: code,
-            rawStatus,
-            raw: redactRaw(body, secrets),
-            found: true,
-          };
-        } catch (err) {
-          if (err instanceof ProviderError && err.kind === "throttled") {
-            stopBatch429 = true;
-            first429Index = Math.min(first429Index, index);
-            if (!logged429) {
-              logged429 = true;
-              console.warn("[sendit] Suivi limité par débit (HTTP 429), lot interrompu");
-            }
-          }
-          results[index] = { trackingNumber: code, rawStatus: null, raw: null, found: true };
+          skip(index, "throttled");
+          return;
         }
+
+        if (res.status === 404) {
+          state.answered++;
+          results[index] = { trackingNumber: code, rawStatus: null, raw: null, found: false };
+          return;
+        }
+
+        if (!res.ok) {
+          state.failures++;
+          state.firstError ??= new ProviderError(
+            res.status >= 500 ? "retryable" : "permanent",
+            formatErrorMessage(res.status, body, text, secrets),
+          );
+          skip(index, "error");
+          return;
+        }
+
+        state.answered++;
+        const d = isRecord(body) && isRecord(body.data) ? body.data : body;
+        let rawStatus: string | null = null;
+        if (isRecord(d)) {
+          if (typeof d.status === "string") {
+            rawStatus = d.status.toUpperCase().trim();
+          } else if (isRecord(d.status) && typeof d.status.code === "string") {
+            rawStatus = d.status.code.toUpperCase().trim();
+          } else if (typeof d.status_code === "string") {
+            rawStatus = d.status_code.toUpperCase().trim();
+          }
+        }
+        if (!rawStatus) rawStatus = null;
+
+        results[index] = {
+          trackingNumber: code,
+          rawStatus,
+          raw: redactRaw(body, secrets),
+          found: true,
+        };
       };
 
       let nextIndex = 0;
@@ -726,15 +806,12 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
       };
 
       const concurrency = Math.min(3, trackingNumbers.length);
-      const pool = Array.from({ length: concurrency }, () => worker());
-      await Promise.all(pool);
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
-      if (first429Index < trackingNumbers.length) {
-        for (let i = first429Index; i < trackingNumbers.length; i++) {
-          results[i] = { trackingNumber: trackingNumbers[i], rawStatus: null, raw: null, found: true };
-        }
+      if (state.fatal) throw state.fatal;
+      if (state.answered === 0) {
+        throw state.firstError ?? new ProviderError("retryable", "Suivi Sendit indisponible");
       }
-
       return results;
     },
 
@@ -865,7 +942,13 @@ export function createSenditProvider(deps: SenditProviderDeps = {}): DeliveryPro
           }
         }
 
+        // Without last_page the page size is unknown, so a short page proves
+        // nothing: only an empty first page is a conclusive "not found".
         const lastPage = pickLastPage(body);
+        if (lastPage === null) {
+          if (page === 1 && rows.length === 0) return { complete: true, parcel: null };
+          return { complete: false, parcel: null };
+        }
         if (page >= lastPage) {
           return { complete: true, parcel: null };
         }

@@ -16,7 +16,7 @@ export function startTrackingWorker(): void {
   if (g.__crmTrackingWorker) return;
 
   if (process.env.DELIVERY_PROVIDER === "mock") {
-    log.info("tracking.mock_provider", { detail: "aucun appel réel à Ozon" });
+    log.info("tracking.mock_provider", { detail: "aucun appel réel au transporteur" });
   }
 
   const tick = async (): Promise<void> => {

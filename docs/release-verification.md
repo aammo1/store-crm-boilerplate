@@ -163,11 +163,18 @@ scripts/fresh-install.test.mjs
 scripts/fulfillment-fixtures.mjs
 scripts/release-integration.test.mjs
 scripts/release-tree.mjs
+src/lib/validation.ts
+```
+
+### Ajouts ultérieurs (spec `sendit-courier`, hors tâche 20)
+
+Fichiers créés par le transporteur Sendit, non couverts par le manifeste ci-dessus :
+
+```text
 scripts/sendit-verify.mjs
 src/lib/shipping/city-sync.ts
 src/lib/shipping/couriers.ts
 src/lib/shipping/sendit.ts
-src/lib/validation.ts
 ```
 
 ### Supprimés après recherche des consommateurs

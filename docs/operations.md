@@ -372,27 +372,37 @@ toutes les clés secrètes sont automatiquement caviardées par le CRM dans les 
 ### Checklist premier colis réel Sendit
 
 1. **Variables d’environnement** : `DELIVERY_PROVIDER=sendit`, `SENDIT_PUBLIC_KEY`, `SENDIT_SECRET_KEY`.
-2. **Synchronisation des villes et quartiers** : exécutée automatiquement au démarrage du CRM
-   ou via `npm run sendit:verify -- --live --yes`. Les villes portent `provider = 'sendit'`,
-   leurs noms arabes (`arabic_name`) et le drapeau point relais (`is_pickup`).
+2. **Synchronisation des villes et quartiers** : exécutée automatiquement par les workers au
+   démarrage du CRM puis toutes les 24 h (le script `sendit:verify` est en lecture seule et
+   **ne synchronise rien** ; l'API `POST /api/crm/cities/sync` permet de la relancer à la demande).
+   Les villes portent `provider = 'sendit'`, leurs noms arabes (`arabic_name`) et le drapeau
+   point de ramassage (`is_pickup`).
 3. **Quartier de ramassage configuré** : se rendre dans `/crm/parametres` → « Transporteur Sendit »,
    sélectionner obligatoirement votre quartier de ramassage (`pickupDistrictId`, requis par l'API Sendit),
    puis activer si souhaité l’ouverture de colis (`allowOpen`) et l’essayage (`allowTry`).
-   Sans quartier de ramassage configuré, la création de colis Sendit échoue.
+   Sans quartier de ramassage configuré, aucun colis n'est envoyé : les transmissions restent en
+   file d'attente (`queued`, rien n'est créé chez Sendit) et la carte « Transporteur » du tableau
+   de bord indique la raison. Elles partent d'elles-mêmes dès que le quartier est enregistré.
 4. **Vérification des tarifs par ville** : la synchronisation pré-remplit les tarifs de livraison
    depuis les prix retournés par Sendit. Ajuster la grille dans `/crm/parametres`.
-5. **Adresse client valide** : la confirmation d'une commande exige une adresse d'au moins 5
-   caractères pour Sendit (`confirmation.ts`).
+5. **Adresse client valide** : la confirmation d'une commande exige une adresse de 5 à 500
+   caractères, pour tous les transporteurs (`confirmation.ts`).
 
 ### Workflow d’expédition : Étiquettes 10×10 et remise groupée
 
 Contrairement à Ozon, Sendit ne fonctionne pas avec des bons de livraison (BL). Le CRM adapte
 automatiquement son interface selon les capacités du transporteur (`src/lib/shipping/couriers.ts`) :
-- Dans `/crm/expeditions`, l’onglet affiche **« Expéditions (Étiquettes) »**.
-- L'agent sélectionne les colis prêts et clique sur **« Générer les étiquettes (PDF) »** :
-  le serveur diffuse le flux PDF 10×10 officiel retourné par Sendit (`/api/crm/labels/pdf`).
-- L'agent clique ensuite sur **« Confirmer la remise au livreur »** : action explicite qui
-  met à jour en lot le statut des commandes en `in_transit` (`/api/crm/parcels/handoff`).
+- `/crm/expeditions` affiche la section **« Colis prêts »** (transmis, commande confirmée, pas
+  encore remis au livreur), sans BL.
+- L'agent sélectionne les colis et clique sur **« Imprimer les étiquettes (N) »** : le serveur
+  diffuse le PDF 10×10 retourné par Sendit (`/api/crm/labels/pdf`), uniquement depuis l'hôte
+  Sendit, en PDF.
+- L'agent clique ensuite sur **« Remis au livreur (N) »** (ou sur « Remis au livreur » d'un
+  colis seul), puis confirme : action explicite qui enregistre la remise
+  (`recordDispatch` → sortie de stock via le service d'inventaire, idempotente ; `/api/crm/parcels/handoff`).
+  Elle ne change pas le statut de suivi : celui-ci vient uniquement du poller.
+- Le colis quitte alors « Colis prêts » et la carte « À expédier (étiquettes) » du tableau de
+  bord, et apparaît dans « Récemment remis ».
 
 ### Soumission, workers et outil de recherche Sendit
 
@@ -401,6 +411,12 @@ automatiquement son interface selon les capacités du transporteur (`src/lib/shi
 - En cas de saturation de l’API Sendit (HTTP 429), l’adaptateur lève une erreur `throttled` : la
   soumission est automatiquement replacée en `queued` avec un délai d’attente sécurisé (`retryAfterSec`
   ou backoff), sans passer par `needs_review`.
+- Un échec de connexion Sendit (réseau, 5xx) **avant** l'envoi de la création prouve que rien n'a été
+  créé : la soumission est replacée en `queued` comme pour un 429. Des clés refusées (401/403) font
+  échouer la soumission (rien n'a été créé non plus ; corriger les clés puis relancer).
+- Suivi : une passe où aucun colis n'obtient de réponse (clés refusées, réseau, 5xx) est comptée
+  comme échec et **n'actualise pas** la dernière synchro suivi (l'alerte de retard peut donc se
+  déclencher) ; un 429 arrête la passe et respecte `Retry-After` (plafonné à 1 h) avant la suivante.
 - En cas d’échec incertain (timeout réseau, erreur HTTP inconnue), la soumission passe immédiatement en
   `needs_review` : aucun retry aveugle.
 - **Outil de recherche chez Sendit** : dans la fiche commande (`/crm/orders/[id]`), le formulaire

@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
-import { deliveryProviderName } from "@/lib/env";
+import { courierProfile, deliveryProviderName } from "@/lib/env";
+import { COURIERS } from "@/lib/shipping/couriers";
 import {
   NEXT_CALLBACK_SQL,
   endOfTodayCasablancaIso,
@@ -293,9 +294,21 @@ function failedSubmissions(): DashboardList<DashboardSubmissionRow> {
   }));
 }
 
-// Mirrors expeditions.ts readyParcels(): submitted + tracking + confirmed, in
-// no BL at all yet — plus parcels parked on a draft BL (board's draft section).
+// Mirrors expeditions.ts readyParcels(). With BL (Ozon): submitted + tracking +
+// confirmed, in no saved BL yet — plus parcels parked on a draft BL (board's
+// draft section). Without BL (Sendit): not yet handed off (no dispatch movement).
 function readyBl(): DashboardList<DashboardParcelRow> {
+  const withBl = COURIERS[courierProfile()].capabilities.deliveryNotes;
+  const blCondition = withBl
+    ? `AND NOT EXISTS (
+           SELECT 1 FROM delivery_note_parcels dnp
+           JOIN delivery_notes dn ON dn.id = dnp.delivery_note_id
+           WHERE dnp.submission_id = cs.id AND dn.status = 'saved'
+         )`
+    : `AND NOT EXISTS (
+           SELECT 1 FROM stock_movements m
+           WHERE m.order_id = o.id AND (m.kind = 'dispatch' OR m.ref LIKE 'disp%')
+         )`;
   const rows = getDb()
     .prepare(
       `SELECT cs.id AS submission_id, cs.tracking_number, o.id AS order_id,
@@ -310,11 +323,7 @@ function readyBl(): DashboardList<DashboardParcelRow> {
        WHERE cs.status = 'submitted'
          AND cs.tracking_number IS NOT NULL
          AND o.confirmation_status = 'confirmed'
-         AND NOT EXISTS (
-           SELECT 1 FROM delivery_note_parcels dnp
-           JOIN delivery_notes dn ON dn.id = dnp.delivery_note_id
-           WHERE dnp.submission_id = cs.id AND dn.status = 'saved'
-         )
+         ${blCondition}
        ORDER BY cs.updated_at ASC, cs.id ASC
        LIMIT ${ROW_LIMIT}`,
     )

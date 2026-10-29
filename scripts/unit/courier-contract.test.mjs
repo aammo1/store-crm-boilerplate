@@ -838,37 +838,34 @@ describe("Sendit Courier Adapter Details", () => {
     );
     assert.ok(fakeHttp.maxInFlight >= 2, "Expected concurrent in-flight requests");
 
-    // 429 mid-batch yields rawStatus:null for the rest
+    // 429 mid-batch: in-flight answers are kept, codes not yet started are skipped as throttled
     fakeHttp.clearRoutes();
-    fakeHttp.route("GET", /\/deliveries\/SND-C1$/, () =>
-      fakeHttp.json({ data: { status: "DELIVERED" } }),
-    );
+    const slow = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return fakeHttp.json({ data: { status: "DELIVERED" } });
+    };
+    fakeHttp.route("GET", /\/deliveries\/SND-C1$/, slow);
     fakeHttp.route("GET", /\/deliveries\/SND-C2$/, () =>
-      fakeHttp.json({ message: "Rate limit" }, { status: 429 }),
+      fakeHttp.json({ message: "Rate limit" }, { status: 429, headers: { "Retry-After": "90" } }),
     );
-    fakeHttp.route("GET", /\/deliveries\/SND-C3$/, () =>
-      fakeHttp.json({ data: { status: "DELIVERED" } }),
-    );
-    fakeHttp.route("GET", /\/deliveries\/SND-C4$/, () =>
-      fakeHttp.json({ data: { status: "DELIVERED" } }),
-    );
+    fakeHttp.route("GET", /\/deliveries\/SND-C3$/, slow);
+    fakeHttp.route("GET", /\/deliveries\/SND-C[456]$/, slow);
 
-    const results = await sendit.track(["SND-C1", "SND-C2", "SND-C3", "SND-C4"]);
-    assert.equal(results.length, 4);
-    assert.equal(results[0].trackingNumber, "SND-C1");
+    const results = await sendit.track(["SND-C1", "SND-C2", "SND-C3", "SND-C4", "SND-C5", "SND-C6"]);
+    assert.equal(results.length, 6);
     assert.equal(results[0].rawStatus, "DELIVERED");
-    assert.equal(results[0].found, true);
-
-    // C2, C3, C4 all resolve with rawStatus: null and found: true
-    assert.equal(results[1].trackingNumber, "SND-C2");
+    assert.equal(results[0].skipped, undefined);
     assert.equal(results[1].rawStatus, null);
     assert.equal(results[1].found, true);
-    assert.equal(results[2].trackingNumber, "SND-C3");
-    assert.equal(results[2].rawStatus, null);
-    assert.equal(results[2].found, true);
-    assert.equal(results[3].trackingNumber, "SND-C4");
-    assert.equal(results[3].rawStatus, null);
-    assert.equal(results[3].found, true);
+    assert.equal(results[1].skipped, "throttled");
+    assert.equal(results[1].retryAfterSec, 90);
+    assert.equal(results[2].rawStatus, "DELIVERED");
+    for (const i of [3, 4, 5]) {
+      assert.equal(results[i].rawStatus, null);
+      assert.equal(results[i].skipped, "throttled");
+      assert.equal(results[i].retryAfterSec, 90);
+    }
+    assert.equal(fakeHttp.calls.filter((c) => /SND-C[456]/.test(c.url)).length, 0, "no request after the 429");
   });
 });
 

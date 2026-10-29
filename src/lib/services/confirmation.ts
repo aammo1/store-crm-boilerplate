@@ -138,11 +138,14 @@ export function confirmOrder(
     }
     if (order.archivedAt) throw new ConfirmationError(409, "Restaurez la commande avant de la confirmer.");
     const address = input.address?.trim() ?? "";
-    if (address.length < 5 || address.length > 500) {
+    if (address.length < 5) {
       throw new ConfirmationError(
         400,
         "Adresse trop courte — indiquez au moins le quartier et la rue (5 caractères minimum).",
       );
+    }
+    if (address.length > 500) {
+      throw new ConfirmationError(400, "Adresse trop longue — 500 caractères maximum.");
     }
     if (!Number.isInteger(input.cityId) || input.cityId < 1) {
       throw new ConfirmationError(400, "Adresse et ville requises.");

@@ -5,7 +5,7 @@ import { getCrmOrder as getOrder } from "./orders";
 import { getProvider } from "@/lib/shipping";
 import type { CourierName } from "@/lib/shipping/couriers";
 import { ProviderError } from "@/lib/shipping/errors";
-import type { DeliveryProvider } from "@/lib/shipping/provider";
+import type { DeliveryProvider, TrackingResult } from "@/lib/shipping/provider";
 import { redactText } from "@/lib/shipping/redact";
 import { normalizeStatus, type NormalizedTrackingStatus } from "@/lib/shipping/status-map";
 import {
@@ -24,6 +24,9 @@ const DEFAULT_TRACK_BATCH = 25;
 
 /** app_state key holding the ISO timestamp of the last successful poll. */
 export const TRACKING_LAST_SYNC_KEY = "tracking_last_sync";
+/** app_state key holding the ISO time before which the poller stays quiet after a 429. */
+export const TRACKING_THROTTLED_UNTIL_KEY = "tracking_throttled_until";
+const MAX_THROTTLE_PAUSE_MS = 60 * 60_000;
 /** Delivered/cancelled parcels older than this are no longer polled. */
 const TERMINAL_POLL_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
 
@@ -332,6 +335,8 @@ function processResult(
     );
     return;
   }
+  // No answer from the courier for this code: leave status and last_sync_at alone.
+  if (result.skipped === "throttled" || result.skipped === "error") return;
   const code = typeof result.trackingNumber === "string" ? result.trackingNumber.trim() : "";
   const targets = code ? byCode.get(code) : undefined;
   if (!targets) {
@@ -383,13 +388,31 @@ function processResult(
 
 // --- Poll.
 
+function pauseAfterThrottle(retryAfterSec: number | undefined): void {
+  console.warn("[tracking] transporteur saturé (429) — sondage interrompu pour cette passe");
+  if (retryAfterSec === undefined || !(retryAfterSec > 0)) return;
+  const pause = Math.min(retryAfterSec * 1000, MAX_THROTTLE_PAUSE_MS);
+  setAppState(TRACKING_THROTTLED_UNTIL_KEY, new Date(Date.now() + pause).toISOString());
+}
+
+function throttledPauseActive(): boolean {
+  const until = Date.parse(getAppState(TRACKING_THROTTLED_UNTIL_KEY) ?? "");
+  return !Number.isNaN(until) && Date.now() < until;
+}
+
 /**
  * One tracking pass over every submitted parcel. Batched bulk calls; a failed
- * batch is logged (redacted) and skipped without touching its last_sync_at;
- * a pass with at least one usable batch (or nothing to poll) updates
- * app_state `tracking_last_sync` for the staleness alert (getTrackingHealth).
+ * batch (provider threw) is logged (redacted) and skipped without touching its
+ * last_sync_at; a pass with at least one usable batch (or nothing to poll)
+ * updates app_state `tracking_last_sync` for the staleness alert
+ * (getTrackingHealth). A throttled answer (429) ends the pass and honours
+ * Retry-After before the next one.
  */
 export async function pollOnce(provider?: DeliveryProvider): Promise<void> {
+  if (throttledPauseActive()) {
+    console.warn("[tracking] pause Retry-After active — passe ignorée");
+    return;
+  }
   const p = provider ?? getProvider();
   const pollAt = new Date().toISOString();
   const profile: CourierName = p.profile ?? courierProfile();
@@ -423,16 +446,26 @@ export async function pollOnce(provider?: DeliveryProvider): Promise<void> {
         continue;
       }
       anySuccess = true;
+      let throttled: TrackingResult | undefined;
       for (const result of results) {
+        if (result?.skipped === "throttled") throttled ??= result;
         try {
           processResult(result, byCode, profile);
         } catch (err) {
           console.error(`[tracking] résultat non traité : ${errMessage(err)}`);
         }
       }
+      if (throttled) {
+        pauseAfterThrottle(throttled.retryAfterSec);
+        break;
+      }
     } catch (err) {
       const kind = err instanceof ProviderError ? err.kind : "unknown";
       console.error(`[tracking] échec du lot (${kind}) : ${errMessage(err)}`);
+      if (err instanceof ProviderError && err.kind === "throttled") {
+        pauseAfterThrottle(err.retryAfterSec);
+        break;
+      }
     }
   }
   if (anySuccess) setAppState(TRACKING_LAST_SYNC_KEY, pollAt);

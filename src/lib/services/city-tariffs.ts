@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { deliveryProviderName } from "@/lib/env";
 import { getAppState } from "@/lib/services/app-state";
 
 export const DEFAULT_COURIER_COST_KEY = "default_courier_cost";
@@ -43,11 +44,17 @@ function assertCost(value: number | null, label: string) {
   }
 }
 
-/** Every city, with its tariff when one exists. Admin data: never expose to the storefront. */
+/**
+ * Cities of the active courier, with their tariff when one exists; tariff rows
+ * already saved for another courier's cities stay listed. Admin data: never
+ * expose to the storefront.
+ */
 export function listCityTariffs(): CityTariff[] {
   return (getDb().prepare(`SELECT c.id AS city_id, c.name AS city_name, t.courier_cost, t.customer_fee_override,
       t.override_ignores_free_threshold, t.updated_at
-    FROM cities c LEFT JOIN city_tariffs t ON t.city_id = c.id ORDER BY c.name COLLATE NOCASE ASC`).all() as Row[]).map(toTariff);
+    FROM cities c LEFT JOIN city_tariffs t ON t.city_id = c.id
+    WHERE c.provider = ? OR t.city_id IS NOT NULL
+    ORDER BY c.name COLLATE NOCASE ASC`).all(deliveryProviderName()) as Row[]).map(toTariff);
 }
 
 export function getCityTariff(cityId: number): CityTariff | null {
@@ -82,7 +89,9 @@ export function courierCostFor(cityId: number | null): number | null {
 function writeTariff(input: CityTariffInput, actorId: string, now: string) {
   assertCost(input.courierCost, "Coût livreur");
   assertCost(input.customerFeeOverride, "Frais client");
-  if (!getDb().prepare("SELECT 1 FROM cities WHERE id = ?").get(input.cityId)) {
+  if (!getDb().prepare(`SELECT 1 FROM cities c WHERE c.id = ?
+      AND (c.provider = ? OR EXISTS (SELECT 1 FROM city_tariffs t WHERE t.city_id = c.id))`)
+    .get(input.cityId, deliveryProviderName())) {
     throw new CityTariffError(404, `Ville introuvable (${input.cityId}).`);
   }
   if (input.courierCost === null && input.customerFeeOverride === null) {

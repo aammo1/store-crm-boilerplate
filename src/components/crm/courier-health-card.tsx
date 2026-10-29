@@ -126,6 +126,17 @@ export function CourierHealthCard({ health, isAdmin }: CourierHealthCardProps) {
         </div>
       ) : null}
 
+      {health.warnings.length > 0 ? (
+        <div className="mt-4 rounded-lg border border-[var(--crm-warning)]/30 bg-[var(--crm-warning-bg)] p-3">
+          <p className="text-xs font-medium text-[var(--crm-warning)]">À vérifier :</p>
+          <ul className="mt-1 list-disc list-inside space-y-1 text-xs text-[var(--crm-warning)]">
+            {health.warnings.map((warning, idx) => (
+              <li key={idx}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-lg border border-border/50 bg-background/50 p-3">
           <p className="text-xs text-muted-foreground">Villes</p>

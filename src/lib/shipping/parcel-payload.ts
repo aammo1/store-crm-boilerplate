@@ -111,7 +111,5 @@ export function buildCreateParcelInput(
       quantity: i.quantity,
       sku: i.sku ?? null,
     })),
-    nature: description,
-    priceMad: snapshot.total,
   };
 }

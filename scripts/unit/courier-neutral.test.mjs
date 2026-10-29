@@ -183,7 +183,7 @@ test("submission worker requeues on throttled error instead of needs_review", as
   const row = db.prepare("SELECT * FROM courier_submissions WHERE id = ?").get(submissionId);
   assert.equal(row.status, "queued");
   assert.equal(row.attempts, 1);
-  assert.match(row.last_error, /Transporteur saturé \(429\) — nouvel essai planifié : Sendit 429/);
+  assert.match(row.last_error, /Transporteur saturé ou injoignable \(rien créé\) — nouvel essai planifié : Sendit 429/);
   const retryAt = new Date(row.next_retry_at).getTime();
   assert.ok(retryAt >= before + 119_000 && retryAt <= before + 125_000, `next_retry_at ${row.next_retry_at} should be ~120s in future`);
 });

@@ -85,7 +85,7 @@ export function createMockProvider(options: MockProviderOptions = {}): MockProvi
       const trackingNumber = `${prefix}${bootId}${String(parcelSeq).padStart(9, "0")}`;
       parcels.set(trackingNumber, input);
       if (input.reference) referenceToCode.set(input.reference, trackingNumber);
-      const price = input.codAmountMad ?? input.priceMad ?? 0;
+      const price = input.codAmountMad ?? 0;
       return {
         trackingNumber,
         raw: {
@@ -98,7 +98,7 @@ export function createMockProvider(options: MockProviderOptions = {}): MockProvi
     async getParcelInfo(trackingNumber: string): Promise<ParcelInfoResult> {
       const input = parcels.get(trackingNumber);
       if (!input) return { raw: null };
-      const price = input.codAmountMad ?? input.priceMad ?? 0;
+      const price = input.codAmountMad ?? 0;
       return {
         raw: {
           "TRACKING-NUMBER": trackingNumber,

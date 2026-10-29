@@ -6,8 +6,8 @@ export type ProviderErrorKind = "retryable" | "permanent" | "unknown" | "throttl
  * safe to log (URLs/credentials redacted via redactUrl()/redactSecrets()).
  *
  * `throttled` = the courier explicitly refused to process the request (e.g.
- * HTTP 429) and nothing was created; only adapters that can guarantee this may
- * raise it.
+ * HTTP 429) or the request never left (login failed first) and nothing was
+ * created; only adapters that can guarantee this may raise it.
  */
 export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;

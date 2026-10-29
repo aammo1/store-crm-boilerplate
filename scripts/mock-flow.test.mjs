@@ -89,7 +89,7 @@ test("mock numbers stay unique and trackable across a simulated restart", async 
   const [seen] = await restarted.track([code]);
   assert.equal(seen.found, true);
   await new Promise((r) => setTimeout(r, 5)); // distinct boot id
-  const input = { receiver: "x", priceMad: 1 };
+  const input = { receiver: "x", codAmountMad: 1 };
   const a = (await restarted.createParcel(input)).trackingNumber;
   const b = (await createMockProvider().createParcel(input)).trackingNumber;
   assert.notEqual(a, b);
@@ -117,13 +117,13 @@ test("two-option and default snapshots survive catalog edits through mock shipme
   db.prepare("UPDATE variants SET label = 'Nouveau libellé', active = 0 WHERE id = 'serum-rose'").run();
   // Even later order changes must not replace the durable queued payload.
   const changed = { ...getCrmOrder("generic-history"), items: [] };
-  assert.equal(buildCreateParcelInput({ payload: frozen }, changed).nature,
+  assert.equal(buildCreateParcelInput({ payload: frozen }, changed).description,
     "Sérum original (500 ml / Rose) ×2 ; Chargeur test (Standard) ×1");
   const provider = getProvider();
   const calls = [];
   await drainSubmissions({ createParcel: async (input) => { calls.push(input); return provider.createParcel(input); } });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].nature, buildCreateParcelInput({ payload: frozen }, changed).nature);
+  assert.equal(calls[0].description, buildCreateParcelInput({ payload: frozen }, changed).description);
   const bl = await createOrResumeBl([submissionId], actor);
   assert.equal(handoffBl(bl.bl.id, actor.id).results.every((result) => result.ok), true);
   await pollOnce();
@@ -154,7 +154,7 @@ test("shipment descriptions keep string options, accepted bonus quantities and b
     items: [item], upsellStatus: "accepted", upsellItems: [{ ...item, name: "Article bonus", unit_price: 150, line_total: 150 }] };
   const snapshot = buildSnapshotObject(order);
   assert.deepEqual(snapshot.items.map((line) => [line.variant_id, line.quantity]), [["v", 1], ["v", 1]]);
-  assert.equal(buildCreateParcelInput({ payload: JSON.stringify(snapshot) }, order).nature,
+  assert.equal(buildCreateParcelInput({ payload: JSON.stringify(snapshot) }, order).description,
     "Chargeur test (Standard) ×1 ; Article bonus (Standard) ×1");
   assert.equal(buildSnapshotObject({ ...order, upsellStatus: "declined" }).items.length, 1);
 });

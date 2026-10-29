@@ -140,7 +140,7 @@ async function processOne(provider: DeliveryProvider, id: string): Promise<void>
           err.retryAfterSec !== undefined
             ? Math.min(Math.max(REQUEUE_DELAY_MS, err.retryAfterSec * 1000), MAX_REQUEUE_DELAY_MS)
             : REQUEUE_DELAY_MS;
-        requeue(id, `Transporteur saturé (429) — nouvel essai planifié : ${message}`, delay);
+        requeue(id, `Transporteur saturé ou injoignable (rien créé) — nouvel essai planifié : ${message}`, delay);
       } else if (err instanceof ProviderError && err.kind === "permanent") {
         setStatus(id, "failed", { lastError: message });
       } else {
