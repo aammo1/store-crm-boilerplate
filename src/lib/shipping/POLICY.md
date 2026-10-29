@@ -23,4 +23,4 @@ nécessaire, la décision documentée est d'utiliser le plancher `parcel-declare
 ## Format téléphone
 
 Le snapshot stocke le format normalisé `+2126XXXXXXXX` ; l'adaptateur reçoit
-`06XXXXXXXX` via `toOzonPhone()` et re-valide.
+`06XXXXXXXX` via `toLocalPhone()` et re-valide.

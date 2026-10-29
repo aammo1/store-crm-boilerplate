@@ -210,7 +210,7 @@ if (child) {
     const { handoffBl } = loadSource("@/lib/services/expeditions");
     const { drainSubmissions } = loadSource("@/lib/workers/submission");
     const { getProvider } = loadSource("@/lib/shipping");
-    const { syncCities } = loadSource("@/lib/shipping/ozon");
+    const { syncCities } = loadSource("@/lib/shipping/city-sync");
     const { ensureReturn, markReturnReceived } = loadSource("@/lib/services/returns");
     await syncCities(getProvider());
     const items = [serum.product.variants[0], standard.product.variants[0]].map(v => ({

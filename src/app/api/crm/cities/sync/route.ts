@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser, AuthGuardError } from "@/lib/auth-guards";
-import { syncCities } from "@/lib/shipping/ozon";
+import { syncCities } from "@/lib/shipping/city-sync";
 import { getProvider } from "@/lib/shipping";
 
 export const dynamic = "force-dynamic";

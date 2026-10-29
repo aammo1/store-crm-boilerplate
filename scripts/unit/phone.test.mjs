@@ -29,3 +29,12 @@ test("rejected inputs are rejected identically on client and server", () => {
     assert.equal(client.normalizeMaPhoneClient(input), null, input);
   }
 });
+
+test("toLocalPhone converts +212[5-7]... to 0[5-7]... and keeps others unchanged", () => {
+  assert.equal(server.toLocalPhone("+212612345678"), "0612345678");
+  assert.equal(server.toLocalPhone("+212712345678"), "0712345678");
+  assert.equal(server.toLocalPhone("+212522000000"), "0522000000");
+  assert.equal(server.toLocalPhone("+33612345678"), "+33612345678");
+  assert.equal(server.toLocalPhone("0612345678"), "0612345678");
+});
+

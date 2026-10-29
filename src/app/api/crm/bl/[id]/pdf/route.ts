@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { AuthGuardError, requireUser } from "@/lib/auth-guards";
 import { getDb } from "@/lib/db";
 import { getProvider } from "@/lib/shipping";
+import { courierPortal } from "@/lib/shipping/courier-copy";
 import { redactText } from "@/lib/shipping/redact";
 import type { PdfFormat } from "@/lib/shipping/provider";
 
@@ -99,14 +100,14 @@ export async function GET(
     } catch (err) {
       console.error(`[bl-pdf] transporteur injoignable : ${redactText(err instanceof Error ? err.message : String(err))}`);
       return json(502, {
-        error: "PDF indisponible — transporteur injoignable. Téléchargez-le depuis le portail Ozon.",
+        error: `PDF indisponible — transporteur injoignable. Téléchargez-le depuis ${courierPortal()}.`,
       });
     }
 
     if (!upstream.ok) {
       console.error(`[bl-pdf] transporteur HTTP ${upstream.status} pour ${filename}`);
       return json(502, {
-        error: `PDF indisponible (HTTP ${upstream.status}) — téléchargez-le depuis le portail Ozon.`,
+        error: `PDF indisponible (HTTP ${upstream.status}) — téléchargez-le depuis ${courierPortal()}.`,
       });
     }
 
@@ -115,7 +116,7 @@ export async function GET(
     const contentType = (upstream.headers.get("content-type") ?? "").toLowerCase();
     if (contentType !== "" && !contentType.includes("pdf")) {
       return json(502, {
-        error: "Le transporteur n'a pas renvoyé de PDF (connexion au portail requise ?). Téléchargez-le depuis le portail Ozon.",
+        error: `Le transporteur n'a pas renvoyé de PDF (connexion au portail requise ?). Téléchargez-le depuis ${courierPortal()}.`,
       });
     }
 

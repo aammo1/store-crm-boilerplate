@@ -15,7 +15,7 @@ type Outcome = "parcel_exists" | "no_parcel";
 
 /**
  * Attributed resolution of a failed / uncertain courier submission. The agent
- * must have checked the Ozon portal first; the evidence is stored with the
+ * must have checked the courier portal first; the evidence is stored with the
  * decision (no SQL edits, no blind retries).
  */
 export function SubmissionResolveForm({ submissionId }: { submissionId: string }) {
@@ -65,7 +65,7 @@ export function SubmissionResolveForm({ submissionId }: { submissionId: string }
     <div className="mt-4 space-y-3 rounded-lg border border-[var(--crm-warning)]/40 bg-[var(--crm-warning-bg)] p-3">
       <p className="text-sm font-medium text-[var(--crm-warning)]">Vérification requise</p>
       <p className="text-xs text-foreground/80">
-        Vérifiez d&apos;abord le portail Ozon : le colis a-t-il été créé pour cette
+        Vérifiez d&apos;abord le portail du transporteur : le colis a-t-il été créé pour cette
         commande ? Ne renvoyez jamais sans cette vérification (risque de doublon
         et de double encaissement).
       </p>
@@ -115,7 +115,7 @@ export function SubmissionResolveForm({ submissionId }: { submissionId: string }
           value={evidence}
           onChange={(event) => setEvidence(event.target.value)}
           maxLength={1000}
-          placeholder="Ex. portail Ozon consulté le 14/10, aucun colis au nom de la cliente."
+          placeholder="Ex. portail du transporteur consulté le 14/10, aucun colis au nom de la cliente."
           className={fieldClassName}
         />
       </div>

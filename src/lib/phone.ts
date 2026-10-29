@@ -6,9 +6,9 @@ export function normalizeMaPhone(raw: string): string | null {
   return normalizeMaPhoneCore(raw);
 }
 
-/** Ozon expects the local format 06XXXXXXXX (+2126XXXXXXXX → 06XXXXXXXX). */
-export function toOzonPhone(normalized: string): string {
-  const m = normalized.match(/^\+212([67]\d{8})$/);
+/** Moroccan couriers expect the local format 0[5-7]XXXXXXXX (+212[5-7]XXXXXXXX → 0[5-7]XXXXXXXX). */
+export function toLocalPhone(normalized: string): string {
+  const m = normalized.match(/^\+212([5-7]\d{8})$/);
   return m ? `0${m[1]}` : normalized;
 }
 

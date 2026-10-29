@@ -1,6 +1,7 @@
-import { toOzonPhone } from "@/lib/phone";
+import rawStoreConfig from "../../../store.config";
+import { toLocalPhone } from "@/lib/phone";
 import type { CrmOrder } from "@/lib/services/orders";
-import type { CreateParcelInput } from "./provider";
+import type { ParcelRequest } from "./provider";
 import type { CommerceOrderItem } from "@/lib/commerce-types";
 import { shipmentDescription } from "@/lib/order-item-label";
 
@@ -13,9 +14,27 @@ export interface ParcelPayloadSnapshot {
   city_name: string | null;
   total: number;
   items: Omit<CommerceOrderItem, "unit_price" | "line_total">[];
+  courier_reference?: string;
 }
 
-type ParcelOrder = Pick<CrmOrder, "id" | "customerName" | "customerPhone" | "address" | "cityId" | "cityName" | "total" | "items" | "upsellStatus" | "upsellItems">;
+type ParcelOrder = Pick<
+  CrmOrder,
+  | "id"
+  | "customerName"
+  | "customerPhone"
+  | "address"
+  | "cityId"
+  | "cityName"
+  | "total"
+  | "items"
+  | "upsellStatus"
+  | "upsellItems"
+>;
+
+export function courierReference(orderId: string): string {
+  const slug = String(rawStoreConfig.slug ?? "store").replace(/[^A-Za-z0-9_-]/g, "");
+  return `${slug}-${orderId}`.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+}
 
 export function buildSnapshotObject(order: ParcelOrder): ParcelPayloadSnapshot {
   const upsellItems =
@@ -28,13 +47,14 @@ export function buildSnapshotObject(order: ParcelOrder): ParcelPayloadSnapshot {
     city_id: order.cityId,
     city_name: order.cityName,
     total: order.total,
+    courier_reference: courierReference(order.id),
     items: [...order.items, ...upsellItems].map((item) => ({
       product_id: item.product_id,
       name: item.name,
       variant_id: item.variant_id,
       sku: item.sku,
       variant_label: item.variant_label,
-      options: item.options.map((option) => ({ ...option })),
+      options: (item.options ?? []).map((option) => ({ ...option })),
       quantity: item.quantity,
     })),
   };
@@ -72,15 +92,26 @@ function snapshotFrom(
 export function buildCreateParcelInput(
   submission: { payload: string | null },
   order: ParcelOrder,
-): CreateParcelInput {
+): ParcelRequest {
   const snapshot = snapshotFrom(submission.payload, order);
+  const description = shipmentDescription(snapshot.items);
   return {
+    reference: snapshot.courier_reference ?? courierReference(snapshot.order_id),
+    orderId: snapshot.order_id,
     receiver: snapshot.customer_name,
-    phone: toOzonPhone(snapshot.customer_phone),
+    phoneLocal: toLocalPhone(snapshot.customer_phone),
     cityId: snapshot.city_id ?? 0,
+    cityName: snapshot.city_name,
     address: snapshot.address ?? "",
+    codAmountMad: snapshot.total,
+    description,
+    items: (snapshot.items ?? []).map((i) => ({
+      name: i.name,
+      options: (i.options ?? []).map((o) => ({ name: o.name, value: o.value })),
+      quantity: i.quantity,
+      sku: i.sku ?? null,
+    })),
+    nature: description,
     priceMad: snapshot.total,
-    nature: shipmentDescription(snapshot.items),
-    stock: 0,
   };
 }

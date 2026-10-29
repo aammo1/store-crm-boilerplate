@@ -23,7 +23,7 @@ export class SubmissionResolutionError extends Error {
 const evidenceField = z
   .string()
   .trim()
-  .min(10, "Décrivez la vérification effectuée dans le portail Ozon.")
+  .min(10, "Décrivez la vérification effectuée chez le transporteur (portail ou support).")
   .max(1000);
 
 export const resolveSubmissionSchema = z.discriminatedUnion("outcome", [
@@ -61,7 +61,7 @@ interface SubmissionState {
 /**
  * Guarded, attributed resolution of a `needs_review` / `failed` submission,
  * replacing the manual SQL edits of the old runbook. The agent must have
- * verified the Ozon portal first (evidence is mandatory and stored):
+ * verified the courier portal first (evidence is mandatory and stored):
  *
  * - `parcel_exists`: attach the portal's tracking number and mark `submitted`
  *   (no new parcel is ever created).

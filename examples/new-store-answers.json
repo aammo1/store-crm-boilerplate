@@ -19,8 +19,11 @@
   "metaAccessToken": "",
   "tiktokPixelId": "",
   "tiktokAccessToken": "",
+  "courier": "ozon",
   "ozonClientId": "",
   "ozonApiKey": "",
+  "senditPublicKey": "",
+  "senditSecretKey": "",
   "adminEmail": "admin@atlas-bijoux.example.ma",
   "adminName": "Administrateur",
   "adminPassword": ""

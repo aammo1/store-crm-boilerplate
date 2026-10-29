@@ -1,5 +1,7 @@
 import { getDb } from "@/lib/db";
+import { courierNumberEnv } from "@/lib/env";
 import { getCrmOrder as getOrder } from "@/lib/services/orders";
+import { courierPortal } from "@/lib/shipping/courier-copy";
 import { ProviderError } from "@/lib/shipping/errors";
 import { getProvider } from "@/lib/shipping";
 import { buildCreateParcelInput } from "@/lib/shipping/parcel-payload";
@@ -13,11 +15,12 @@ const BATCH_SIZE = 5;
 const DEFAULT_INTERVAL_SEC = 15;
 const MIN_INTERVAL_SEC = 5;
 const REQUEUE_DELAY_MS = 60_000;
+const MAX_REQUEUE_DELAY_MS = 15 * 60_000;
 const STALE_SUBMITTING_MS = 5 * 60_000;
 
 export function submissionIntervalMs(): number {
-  const raw = Number(process.env.OZON_SUBMIT_INTERVAL_SEC);
-  const sec = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INTERVAL_SEC;
+  const raw = courierNumberEnv("SUBMIT_INTERVAL_SEC");
+  const sec = raw !== undefined && raw > 0 ? raw : DEFAULT_INTERVAL_SEC;
   return Math.max(sec, MIN_INTERVAL_SEC) * 1000;
 }
 
@@ -61,26 +64,27 @@ function setStatus(
 /** Crash mid-flight means the request outcome is unknowable — never re-create. */
 function resolveStaleSubmitting(): void {
   const now = nowIso();
+  const defaultError = `Worker interrompu pendant la soumission — vérifier sur ${courierPortal()} avant toute re-création`;
   getDb()
     .prepare(
       `UPDATE courier_submissions
        SET status = 'needs_review',
-           last_error = COALESCE(last_error, 'Worker interrompu pendant la soumission — vérifier sur le portail Ozon avant toute re-création'),
+           last_error = COALESCE(last_error, ?),
            updated_at = ?
        WHERE status = 'submitting'`,
     )
-    .run(now);
+    .run(defaultError, now);
 }
 
-/** Pre-network failure: no courier request was sent, so a delayed retry is safe. */
-function requeue(id: string, lastError: string): void {
+/** Pre-network failure or rate limit: no courier parcel was created, so a delayed retry is safe. */
+function requeue(id: string, lastError: string, delayMs: number = REQUEUE_DELAY_MS): void {
   const now = Date.now();
   getDb()
     .prepare(
       `UPDATE courier_submissions SET status = 'queued', last_error = ?, next_retry_at = ?, updated_at = ?
        WHERE id = ? AND status = 'submitting'`,
     )
-    .run(lastError, new Date(now + REQUEUE_DELAY_MS).toISOString(), new Date(now).toISOString(), id);
+    .run(lastError, new Date(now + delayMs).toISOString(), new Date(now).toISOString(), id);
 }
 
 async function processOne(provider: DeliveryProvider, id: string): Promise<void> {
@@ -124,6 +128,12 @@ async function processOne(provider: DeliveryProvider, id: string): Promise<void>
     try {
       if (!requestSent) {
         requeue(id, `Erreur avant envoi transporteur : ${message}`);
+      } else if (err instanceof ProviderError && err.kind === "throttled") {
+        const delay =
+          err.retryAfterSec !== undefined
+            ? Math.min(Math.max(REQUEUE_DELAY_MS, err.retryAfterSec * 1000), MAX_REQUEUE_DELAY_MS)
+            : REQUEUE_DELAY_MS;
+        requeue(id, `Transporteur saturé (429) — nouvel essai planifié : ${message}`, delay);
       } else if (err instanceof ProviderError && err.kind === "permanent") {
         setStatus(id, "failed", { lastError: message });
       } else {
@@ -147,15 +157,17 @@ function redactRaw(raw: unknown): string | null {
  */
 function resolveOldSubmitting(): void {
   const cutoff = new Date(Date.now() - STALE_SUBMITTING_MS).toISOString();
+  const now = nowIso();
+  const defaultError = `Soumission bloquée — vérifier sur ${courierPortal()} avant toute re-création`;
   getDb()
     .prepare(
       `UPDATE courier_submissions
        SET status = 'needs_review',
-           last_error = COALESCE(last_error, 'Soumission bloquée — vérifier sur le portail Ozon avant toute re-création'),
+           last_error = COALESCE(last_error, ?),
            updated_at = ?
        WHERE status = 'submitting' AND updated_at < ?`,
     )
-    .run(nowIso(), cutoff);
+    .run(defaultError, now, cutoff);
 }
 
 /**
@@ -205,7 +217,7 @@ export function startSubmissionWorker(): void {
   if (g.__crmSubmissionWorker) return;
 
   if (process.env.DELIVERY_PROVIDER === "mock") {
-    log.info("submission.mock_provider", { detail: "aucun appel réel à Ozon" });
+    log.info("submission.mock_provider", { detail: "aucun appel réel au transporteur" });
   }
 
   try {

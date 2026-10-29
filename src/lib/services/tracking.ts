@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
+import { courierNumberEnv } from "@/lib/env";
 import { getCrmOrder as getOrder } from "./orders";
 import { getProvider } from "@/lib/shipping";
 import { ProviderError } from "@/lib/shipping/errors";
@@ -22,8 +23,8 @@ export const TRACKING_LAST_SYNC_KEY = "tracking_last_sync";
 const TERMINAL_POLL_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
 
 export function pollIntervalMin(): number {
-  const raw = Number(process.env.OZON_POLL_INTERVAL_MIN);
-  const min = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_POLL_INTERVAL_MIN;
+  const raw = courierNumberEnv("POLL_INTERVAL_MIN");
+  const min = raw !== undefined && raw > 0 ? raw : DEFAULT_POLL_INTERVAL_MIN;
   return Math.max(min, MIN_POLL_INTERVAL_MIN);
 }
 
@@ -32,8 +33,8 @@ export function pollIntervalMs(): number {
 }
 
 export function trackBatchSize(): number {
-  const raw = Number(process.env.OZON_TRACK_BATCH);
-  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_TRACK_BATCH;
+  const raw = courierNumberEnv("TRACK_BATCH");
+  return raw !== undefined && Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_TRACK_BATCH;
 }
 
 export { getAppState, setAppState };

@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import { getDb } from "@/lib/db";
 import { reconcileBlSchema } from "@/lib/api-schemas";
 import { getProvider } from "@/lib/shipping";
+import { courierPortal } from "@/lib/shipping/courier-copy";
 import { redactSecrets, redactText } from "@/lib/shipping/redact";
 import type { DeliveryProvider } from "@/lib/shipping/provider";
 import type { z } from "zod";
@@ -79,7 +80,7 @@ function event(op: Operation, kind: string, actor: Actor, detail: string | null 
 }
 function conflict(op: Operation): never {
   throw new BlError(409, op.status === "running"
-    ? "Cette opération BL est en cours. Si elle a été interrompue, vérifiez son résultat dans le portail Ozon avant de la résoudre."
+    ? `Cette opération BL est en cours. Si elle a été interrompue, vérifiez son résultat dans ${courierPortal()} avant de la résoudre.`
     : "Résultat transporteur incertain. Vérifiez et résolvez cette opération dans les expéditions avant de continuer.",
   { operationId: op.id, stage: op.stage === "done" ? undefined : op.stage, bl: noteFor(op) });
 }
@@ -200,7 +201,7 @@ async function runOperation(id: string, actor: Actor, provider: DeliveryProvider
     const op = operation(id);
     if (op.status !== "ready") conflict(op);
     const parcels = claims(id);
-    if (!parcels.length) throw new BlError(409, "Associez les colis de cet ancien BL après vérification dans le portail Ozon.");
+    if (!parcels.length) throw new BlError(409, `Associez les colis de cet ancien BL après vérification dans ${courierPortal()}.`);
     const current = validateParcels(parcels.map(row => row.submission_id));
     if (current.some(row => parcels.find(p => p.submission_id === row.submission_id)?.tracking_number !== row.tracking_number)) {
       throw new BlError(409, "Les numéros de suivi ont changé : réconciliation nécessaire.");
@@ -267,7 +268,7 @@ async function runOperation(id: string, actor: Actor, provider: DeliveryProvider
           revision = revision + 1, updated_at = ? WHERE id = ?`).run(detail,
             observedRef && /^[A-Za-z0-9._/-]{1,128}$/.test(observedRef) && redactText(observedRef) === observedRef ? observedRef : null, nowIso(), id);
       }).immediate();
-      throw new BlError(502, "Résultat BL incertain. Les colis restent réservés pour cette opération. Vérifiez le portail Ozon puis utilisez « Résoudre ».",
+      throw new BlError(502, `Résultat BL incertain. Les colis restent réservés pour cette opération. Vérifiez ${courierPortal()} puis utilisez « Résoudre ».`,
         { operationId: id, stage: attempted?.stage === "done" ? undefined : attempted?.stage, bl: noteFor(operation(id)) });
     }
   }

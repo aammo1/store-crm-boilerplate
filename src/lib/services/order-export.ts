@@ -1,6 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toCsv } from "@/lib/csv";
-import { toOzonPhone } from "@/lib/phone";
+import { toLocalPhone } from "@/lib/phone";
 import { TRACKING_STATUSES } from "@/lib/shipping/status-map";
 import {
   NEXT_CALLBACK_SQL,
@@ -133,10 +133,10 @@ function parseItems(json: string): Array<{ name: string; quantity: number; varia
   }
 }
 
-/** Local form (06…/07…) for valid +212 numbers: starts with 0, so no formula-guard apostrophe. Else unchanged. */
+/** Local form (05…/06…/07…) for valid +212 numbers: starts with 0, so no formula-guard apostrophe. Else unchanged. */
 function localPhone(phone: string): string {
-  const local = toOzonPhone(phone);
-  return /^0[67]\d{8}$/.test(local) ? local : phone;
+  const local = toLocalPhone(phone);
+  return /^0[5-7]\d{8}$/.test(local) ? local : phone;
 }
 
 function fmtDate(iso: string | null): string {

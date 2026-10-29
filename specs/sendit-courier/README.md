@@ -89,9 +89,9 @@ graph TD
 - [x] [task-04-cod-foreign-lines](./tasks/task-04-cod-foreign-lines.md) — COD import ignores other stores' parcels
 
 ### Wave 2
-- [ ] [task-05-neutral-copy-knobs](./tasks/task-05-neutral-copy-knobs.md) — Courier-neutral copy, COURIER_* knobs, throttled error kind
-- [ ] [task-06-shipping-core-refactor](./tasks/task-06-shipping-core-refactor.md) — ParcelRequest, capabilities, shared city sync, mock profiles
-- [ ] [task-07-wizard-courier-choice](./tasks/task-07-wizard-courier-choice.md) — Wizard courier choice and env files
+- [x] [task-05-neutral-copy-knobs](./tasks/task-05-neutral-copy-knobs.md) — Courier-neutral copy, COURIER_* knobs, throttled error kind
+- [x] [task-06-shipping-core-refactor](./tasks/task-06-shipping-core-refactor.md) — ParcelRequest, capabilities, shared city sync, mock profiles
+- [x] [task-07-wizard-courier-choice](./tasks/task-07-wizard-courier-choice.md) — Wizard courier choice and env files
 
 ### Wave 3
 - [ ] [task-08-sendit-adapter](./tasks/task-08-sendit-adapter.md) — Sendit adapter

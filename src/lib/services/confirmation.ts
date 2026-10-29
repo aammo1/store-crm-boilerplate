@@ -12,6 +12,7 @@ import {
 } from "@/lib/services/inventory";
 import { getCrmOrder as getOrder, insertContact, type CrmOrder, type ConfirmationStatus } from "@/lib/services/orders";
 import { createSubmission } from "@/lib/services/submissions";
+import { courierPortal } from "@/lib/shipping/courier-copy";
 
 export class ConfirmationError extends Error {
   readonly status: 400 | 404 | 409;
@@ -278,7 +279,7 @@ export function cancelOrder(
         // agent verifies the portal and resolves the submission (R7/R8).
         throw new ConfirmationError(
           409,
-          "Résultat transporteur incertain — vérifiez le portail Ozon et résolvez la soumission avant d'annuler.",
+          `Résultat transporteur incertain — vérifiez ${courierPortal()} et résolvez la soumission avant d'annuler.`,
         );
       }
     }

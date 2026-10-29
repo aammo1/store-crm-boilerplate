@@ -19,8 +19,9 @@ import { renderConfig } from "./new-store/template.mjs";
 import { envText, envValues, PRODUCTION_ENV_HEADER } from "./new-store/env.mjs";
 import { copyPresets } from "./new-store/copy-presets.mjs";
 import { categorySlugs, normalizeDomain, randomStoreSlug, slugify, slugifyWithArabic } from "./new-store/slug.mjs";
+import { WIZARD_COURIERS } from "./new-store/couriers.mjs";
 
-export { slugify };
+export { slugify, collectFromFile, collectInteractive, FIELDS, FieldError };
 
 const MARKER = "// new-store:template";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -124,8 +125,12 @@ const FIELDS = [
   { key: "tiktokPixelId", prompt: "TikTok pixel code (optionnel)", optional: true,
     parse: (v) => { if (v && !/^[A-Z0-9]{10,30}$/.test(v)) throw new FieldError("10 à 30 caractères A-Z/0-9 attendus"); return v; } },
   { key: "tiktokAccessToken", prompt: "TikTok access token (optionnel)", optional: true, secret: true, parse: str },
-  { key: "ozonClientId", prompt: "Ozon Client ID (optionnel)", optional: true, group: "Ozon (optionnel, peut être fait plus tard)", parse: str },
-  { key: "ozonApiKey", prompt: "Ozon API key (optionnel)", optional: true, secret: true, parse: str },
+  { key: "courier", prompt: "Transporteur (ozon/sendit)", group: "Livraison", default: () => "ozon",
+    parse: (v) => { const c = str(v).toLowerCase(); if (!(c in WIZARD_COURIERS)) throw new FieldError("« ozon » ou « sendit » attendu"); return c; } },
+  { key: "ozonClientId", prompt: "Ozon Client ID (optionnel, peut être fait plus tard)", optional: true, when: (a) => a.courier === "ozon", parse: str },
+  { key: "ozonApiKey", prompt: "Ozon API key (optionnel)", optional: true, secret: true, when: (a) => a.courier === "ozon", parse: str },
+  { key: "senditPublicKey", prompt: "Sendit clé publique (optionnel, peut être fait plus tard)", optional: true, when: (a) => a.courier === "sendit", parse: str },
+  { key: "senditSecretKey", prompt: "Sendit clé secrète (optionnel)", optional: true, secret: true, when: (a) => a.courier === "sendit", parse: str },
   { key: "adminEmail", prompt: "Email", required: true, group: "Administrateur", userOnly: true,
     parse: (v) => {
       if (v.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) throw new FieldError("email invalide");
@@ -173,6 +178,7 @@ async function collectInteractive(skipUser) {
   try {
     for (const field of FIELDS) {
       if (field.userOnly && skipUser) continue;
+      if (field.when && !field.when(answers)) { answers[field.key] = ""; continue; }
       if (field.group && field.group !== group) {
         group = field.group;
         console.log(`\n== ${group} ==`);
@@ -191,6 +197,9 @@ async function collectInteractive(skipUser) {
           }
           answers[field.key] = value;
           if (field.key === "whatsapp") answers.whatsappRaw = raw;
+          if (field.key === "courier" && value === "sendit") {
+            console.log("  Le district de ramassage se choisit ensuite dans CRM → Paramètres.");
+          }
           break;
         } catch (error) {
           if (!(error instanceof FieldError)) throw error;
@@ -219,6 +228,7 @@ function collectFromFile(file, skipUser) {
   const answers = {};
   for (const field of FIELDS) {
     if (field.userOnly && skipUser) continue;
+    if (field.when && !field.when(answers)) { answers[field.key] = ""; continue; }
     const provided = raw[field.key];
     const given = Array.isArray(provided) ? provided : str(provided);
     // Relative asset paths resolve from the answers file directory.
@@ -512,7 +522,9 @@ Prochaines étapes :
 `);
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}

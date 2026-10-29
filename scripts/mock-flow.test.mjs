@@ -26,7 +26,8 @@ const { handoffBl } = loadSource("@/lib/services/expeditions");
 const { pollOnce } = loadSource("@/lib/services/tracking");
 const { getProvider } = loadSource("@/lib/shipping");
 const { createMockProvider } = loadSource("@/lib/shipping/mock");
-const { syncCities } = loadSource("@/lib/shipping/ozon");
+const { syncCities } = loadSource("@/lib/shipping/city-sync");
+const { ProviderError } = loadSource("@/lib/shipping/errors");
 const { drainSubmissions } = loadSource("@/lib/workers/submission");
 const { buildCreateParcelInput, buildSnapshotObject } = loadSource("@/lib/shipping/parcel-payload");
 const { shipmentDescription } = loadSource("@/lib/order-item-label");
@@ -195,3 +196,94 @@ test("submission worker never strands a claimed job and leaves jobs queued while
   assert.equal(created, 0);
   assert.equal(httpCalls.length, 0);
 });
+
+test("MOCK_COURIER_PROFILE=sendit produces Sendit codes, capabilities, cities and pre-fills tariffs", async () => {
+  const prevProfile = process.env.MOCK_COURIER_PROFILE;
+  process.env.MOCK_COURIER_PROFILE = "sendit";
+  try {
+    const provider = getProvider();
+    assert.equal(provider.profile, "sendit");
+    assert.equal(provider.capabilities.deliveryNotes, false);
+    assert.equal(provider.capabilities.labels, true);
+    assert.equal(provider.capabilities.parcelLookup, true);
+
+    // Pre-existing tariff for Casablanca (city 1)
+    db.prepare(`INSERT OR REPLACE INTO city_tariffs (city_id, courier_cost, override_ignores_free_threshold, updated_by, updated_at)
+      VALUES (1, 99, 0, NULL, ?)`).run(now);
+
+    // syncCities writes provider='mock', arabic_name, is_pickup=1 for Casablanca, and pre-fills tariffs for others
+    const count = await syncCities(provider);
+    assert.equal(count, 5);
+
+    const casa = db.prepare("SELECT * FROM cities WHERE id = 1").get();
+    assert.equal(casa.provider, "mock");
+    assert.equal(casa.arabic_name, "الدار البيضاء");
+    assert.equal(casa.is_pickup, 1);
+
+    const rabat = db.prepare("SELECT * FROM cities WHERE id = 2").get();
+    assert.equal(rabat.arabic_name, "الرباط");
+    assert.equal(rabat.is_pickup, 0);
+
+    // Existing tariff for Casablanca kept unchanged at 99
+    const casaTariff = db.prepare("SELECT courier_cost FROM city_tariffs WHERE city_id = 1").get();
+    assert.equal(casaTariff.courier_cost, 99);
+
+    // Missing tariff for Rabat pre-filled from mock's priceMad (35)
+    const rabatTariff = db.prepare("SELECT courier_cost FROM city_tariffs WHERE city_id = 2").get();
+    assert.equal(rabatTariff.courier_cost, 35);
+
+    // buildCreateParcelInput returns reference starting with store slug and phoneLocal 06...
+    const item = { product_id: "p", variant_id: "v", sku: "v", name: "Chargeur test", variant_label: "Standard", options: [], quantity: 1, unit_price: 300, line_total: 300 };
+    const orderData = {
+      id: "sendit-ord-1",
+      customerName: "Ahmed Alami",
+      customerPhone: "+212612345678",
+      address: "123 Bd Zerktouni",
+      cityId: 1,
+      cityName: "Casablanca",
+      total: 300,
+      items: [item],
+      upsellStatus: null,
+      upsellItems: [],
+    };
+    const input = buildCreateParcelInput({ payload: null }, orderData);
+    assert.ok(input.reference.startsWith("ma-boutique-sendit-ord-1"), input.reference);
+    assert.equal(input.phoneLocal, "0612345678");
+
+    // createParcel produces SNDMOCK code
+    const res = await provider.createParcel(input);
+    assert.ok(res.trackingNumber.startsWith("SNDMOCK"), res.trackingNumber);
+
+    // BL methods reject with ProviderError kind permanent
+    await assert.rejects(
+      () => provider.createDeliveryNote(),
+      (err) => err instanceof ProviderError && err.kind === "permanent",
+    );
+    await assert.rejects(
+      () => provider.addParcelsToDeliveryNote("BL1", [res.trackingNumber]),
+      (err) => err instanceof ProviderError && err.kind === "permanent",
+    );
+    await assert.rejects(
+      () => provider.saveDeliveryNote("BL1"),
+      (err) => err instanceof ProviderError && err.kind === "permanent",
+    );
+    assert.equal(provider.deliveryNotePdfUrl("BL1", "standard"), "mock://pdf/unsupported");
+
+    // Reference lookup
+    const lookup = await provider.findParcelByReference(input.reference, input.phoneLocal);
+    assert.equal(lookup.complete, true);
+    assert.equal(lookup.parcel?.trackingNumber, res.trackingNumber);
+    assert.equal(lookup.parcel?.rawStatus, "PENDING");
+
+    // Labels PDF
+    const labels = await provider.getLabelsPdf([res.trackingNumber], "10x10");
+    assert.equal(labels.url, "mock://labels/10x10/1");
+  } finally {
+    if (prevProfile === undefined) {
+      delete process.env.MOCK_COURIER_PROFILE;
+    } else {
+      process.env.MOCK_COURIER_PROFILE = prevProfile;
+    }
+  }
+});
+

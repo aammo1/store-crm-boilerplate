@@ -1,15 +1,15 @@
 import { z } from "zod";
-import { getDb } from "@/lib/db";
 import { normalizeMaPhone } from "@/lib/phone";
+import { COURIERS } from "./couriers";
 import { ProviderError } from "./errors";
 import { redactSecrets, redactUrl } from "./redact";
 import type {
   City,
-  CreateParcelInput,
   CreateParcelResult,
   DeliveryNoteHandles,
   DeliveryProvider,
   ParcelInfoResult,
+  ParcelRequest,
   PdfFormat,
   TrackingResult,
 } from "./provider";
@@ -361,7 +361,7 @@ function extractTrackingEntries(
   return null;
 }
 
-function buildParcelFields(input: CreateParcelInput): Record<string, string> {
+function buildParcelFields(input: ParcelRequest): Record<string, string> {
   const receiver = input.receiver.trim();
   if (!receiver) throw new ProviderError("permanent", "Nom du destinataire requis");
   const address = input.address.trim();
@@ -369,10 +369,11 @@ function buildParcelFields(input: CreateParcelInput): Record<string, string> {
   if (!Number.isInteger(input.cityId) || input.cityId <= 0) {
     throw new ProviderError("permanent", "Identifiant de ville invalide");
   }
-  if (!Number.isInteger(input.priceMad) || input.priceMad < 0) {
+  const price = input.codAmountMad ?? input.priceMad ?? 0;
+  if (!Number.isInteger(price) || price < 0) {
     throw new ProviderError("permanent", "Prix COD invalide (entier MAD attendu)");
   }
-  const normalized = normalizeMaPhone(input.phone);
+  const normalized = normalizeMaPhone(input.phoneLocal);
   if (!normalized) {
     throw new ProviderError("permanent", "Téléphone destinataire invalide");
   }
@@ -384,26 +385,13 @@ function buildParcelFields(input: CreateParcelInput): Record<string, string> {
     "parcel-phone": localPhone,
     "parcel-city": String(input.cityId),
     "parcel-address": address,
-    "parcel-price": String(input.priceMad),
-    "parcel-stock": String(input.stock),
+    "parcel-price": String(price),
+    "parcel-nature": input.description ?? input.nature ?? "",
+    "parcel-stock": "0",
   };
-  if (input.declaredValueMad !== undefined) {
-    if (!Number.isInteger(input.declaredValueMad) || input.declaredValueMad < 0) {
-      throw new ProviderError("permanent", "Valeur déclarée invalide (entier MAD attendu)");
-    }
-    fields["parcel-declared-value"] = String(input.declaredValueMad);
-  }
-  if (input.note) fields["parcel-note"] = input.note;
-  if (input.nature) fields["parcel-nature"] = input.nature;
-  if (input.open !== undefined) fields["parcel-open"] = String(input.open);
-  if (input.fragile !== undefined) fields["parcel-fragile"] = String(input.fragile);
-  if (input.replace !== undefined) fields["parcel-replace"] = String(input.replace);
-  if (input.products && input.products.length > 0) {
-    fields.products = JSON.stringify(input.products);
-  }
   // Custom codes stay OFF by default: semantics unverified (docs/operations.md).
   if (process.env.OZON_USE_CUSTOM_TRACKING === "1") {
-    const customCode = input.customTrackingCode?.trim();
+    const customCode = input.reference?.trim();
     if (!customCode) {
       throw new ProviderError(
         "permanent",
@@ -423,8 +411,23 @@ function isTrackingNotFound(value: unknown): boolean {
 }
 
 export class OzonExpressAdapter implements DeliveryProvider {
+  readonly name = "ozon" as const;
+  readonly profile = "ozon" as const;
+  readonly capabilities = COURIERS.ozon.capabilities;
+
   isConfigured(): boolean {
     return readCredentials() !== null;
+  }
+
+  configurationIssues(): string[] {
+    const issues: string[] = [];
+    if (!process.env.OZON_CLIENT_ID?.trim()) issues.push("OZON_CLIENT_ID manquant");
+    if (!process.env.OZON_API_KEY?.trim()) issues.push("OZON_API_KEY manquant");
+    return issues;
+  }
+
+  async testConnection(): Promise<void> {
+    await this.listCities();
   }
 
   async listCities(): Promise<City[]> {
@@ -440,7 +443,7 @@ export class OzonExpressAdapter implements DeliveryProvider {
     return cities;
   }
 
-  async createParcel(input: CreateParcelInput): Promise<CreateParcelResult> {
+  async createParcel(input: ParcelRequest): Promise<CreateParcelResult> {
     const creds = requireCredentials();
     const fields = buildParcelFields(input);
     const body = await requestJson(
@@ -567,19 +570,4 @@ export class OzonExpressAdapter implements DeliveryProvider {
 
 export function createOzonProvider(): DeliveryProvider {
   return new OzonExpressAdapter();
-}
-
-/** listCities() → upsert into `cities`. Tolerant of schema variations. */
-export async function syncCities(provider?: DeliveryProvider): Promise<number> {
-  const cities = await (provider ?? new OzonExpressAdapter()).listCities();
-  const db = getDb();
-  const now = new Date().toISOString();
-  const upsert = db.prepare(`
-    INSERT INTO cities (id, name, updated_at) VALUES (?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at
-  `);
-  db.transaction(() => {
-    for (const city of cities) upsert.run(city.id, city.name, now);
-  })();
-  return cities.length;
 }

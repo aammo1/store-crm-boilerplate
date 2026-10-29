@@ -121,7 +121,7 @@ export const reconcileBlSchema = z.object({
   revision: z.number().int().min(0),
   stage: z.enum(["create", "attach", "save"]),
   outcome: z.enum(["applied", "not_applied", "partial", "unused"]),
-  evidence: z.string().trim().min(10, "Décrivez la vérification effectuée dans le portail Ozon.").max(1000),
+  evidence: z.string().trim().min(10, "Décrivez la vérification effectuée chez le transporteur (portail ou support).").max(1000),
   ref: z.string().trim().min(1).max(128).regex(/^[A-Za-z0-9._/-]+$/, "Indiquez une référence BL, pas une URL.").optional(),
   attachedSubmissionIds: z.array(z.string().trim().min(1).max(64)).max(100).optional(),
   // Only for legacy orphan drafts whose original selection was not persisted.

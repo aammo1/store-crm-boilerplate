@@ -88,7 +88,7 @@ export function BlOperationCard({ operation, selectedReady, onExplain }: {
             </Button>
           )}
           {operation.canResolve && (
-            <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>Résoudre après vérification Ozon</Button>
+            <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>Résoudre après vérification chez le transporteur</Button>
           )}
           <Button size="sm" variant="ghost" disabled={pending} onClick={() => router.refresh()}>Actualiser</Button>
           {operation.status === "running" && !operation.canResolve && (
@@ -106,7 +106,7 @@ export function BlOperationCard({ operation, selectedReady, onExplain }: {
             ...(orphan && outcome !== "unused" ? { submissionIds: selectedReady.map(p => p.submissionId) } : {}) });
         }}>
           <p className="text-sm text-muted-foreground">
-            Vérifiez le résultat dans le portail Ozon (ou auprès du support) avant de choisir.
+            Vérifiez le résultat dans le portail du transporteur (ou auprès du support) avant de choisir.
             Une étape déclarée non effectuée pourra être relancée ; une étape effectuée ne le sera pas.
           </p>
           {orphan && <p className="text-xs text-[var(--crm-warning)]">
@@ -118,13 +118,13 @@ export function BlOperationCard({ operation, selectedReady, onExplain }: {
             <select id={`${prefix}-outcome`} value={outcome} required onChange={event => setOutcome(event.target.value)}
               className="rounded-lg border border-input bg-background p-2 text-sm text-foreground">
               <option value="">Choisir le résultat vérifié</option>
-              <option value="applied">{operation.stage === "create" ? "BL créé — référence retrouvée" : operation.stage === "attach" ? "Tous les colis restants sont rattachés" : "BL enregistré chez Ozon"}</option>
+              <option value="applied">{operation.stage === "create" ? "BL créé — référence retrouvée" : operation.stage === "attach" ? "Tous les colis restants sont rattachés" : "BL enregistré chez le transporteur"}</option>
               <option value="not_applied">{operation.stage === "create" ? "Aucun BL créé — absence vérifiée" : operation.stage === "attach" ? "Aucun des colis restants n'est rattaché" : "BL encore en brouillon — vérifié"}</option>
               {operation.stage === "attach" && <option value="partial">Une partie des colis restants est rattachée</option>}
-              {orphan && operation.id.startsWith("legacy:") && <option value="unused">Ancien BL inutilisé — aucun colis chez Ozon, vérifié</option>}
+              {orphan && operation.id.startsWith("legacy:") && <option value="unused">Ancien BL inutilisé — aucun colis chez le transporteur, vérifié</option>}
             </select>
             {operation.stage === "create" && outcome === "applied" && <>
-              <Label htmlFor={`${prefix}-ref`}>Référence du BL existant chez Ozon</Label>
+              <Label htmlFor={`${prefix}-ref`}>Référence du BL existant chez le transporteur</Label>
               <Input id={`${prefix}-ref`} value={ref} required maxLength={128} onChange={event => setRef(event.target.value)} />
             </>}
             {outcome === "partial" && <fieldset className="flex flex-col gap-2">
@@ -138,7 +138,7 @@ export function BlOperationCard({ operation, selectedReady, onExplain }: {
             </fieldset>}
             <Label htmlFor={`${prefix}-evidence`}>Vérification effectuée et preuve / référence support</Label>
             <Textarea id={`${prefix}-evidence`} value={evidence} required minLength={10} maxLength={1000}
-              placeholder="Ex. : portail Ozon vérifié le…, référence…, codes de suivi présents / absents…"
+              placeholder="Ex. : portail du transporteur vérifié le…, référence…, codes de suivi présents / absents…"
               onChange={event => setEvidence(event.target.value)} />
           </fieldset>
           <div className="flex flex-wrap gap-2">

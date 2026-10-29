@@ -1,6 +1,6 @@
 import { ProviderError } from "@/lib/shipping/errors";
 import { getProvider } from "@/lib/shipping";
-import { syncCities } from "@/lib/shipping/ozon";
+import { syncCities } from "@/lib/shipping/city-sync";
 import { log } from "@/lib/log";
 import { recordWorkerError } from "@/lib/services/worker-status";
 import {
